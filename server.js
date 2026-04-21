@@ -12,7 +12,16 @@ app.use(express.json());
 app.use('/clips', express.static('/tmp/clips'));
 
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
-const proxyFlag = process.env.PROXY_URL ? `--proxy "${process.env.PROXY_URL}"` : '';
+const proxyUrl = process.env.PROXY_URL;
+const proxyUser = process.env.PROXY_USERNAME;
+const proxyPass = process.env.PROXY_PASSWORD;
+
+let proxyFlag = '';
+if (proxyUrl && proxyUser && proxyPass) {
+  proxyFlag = `--proxy "${proxyUrl}" --proxy-user "${proxyUser}" --proxy-pass "${proxyPass}"`;
+} else if (proxyUrl) {
+  proxyFlag = `--proxy "${proxyUrl}"`;
+}
 
 async function updateYtDlp() {
   try { await run('yt-dlp -U'); } catch(e) { console.log('yt-dlp update skipped'); }
