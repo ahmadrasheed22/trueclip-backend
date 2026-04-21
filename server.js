@@ -12,6 +12,7 @@ app.use(express.json());
 app.use('/clips', express.static('/tmp/clips'));
 
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+const proxyFlag = process.env.PROXY_URL ? `--proxy "${process.env.PROXY_URL}"` : '';
 
 async function updateYtDlp() {
   try { await run('yt-dlp -U'); } catch(e) { console.log('yt-dlp update skipped'); }
@@ -47,7 +48,7 @@ app.post('/generate', async (req, res) => {
     const videoPath = `${tmpDir}/video.mp4`;
     const cookiesPath = path.join(process.cwd(), 'cookies.txt');
     const cookiesFlag = fs.existsSync(cookiesPath) ? `--cookies "${cookiesPath}"` : '';
-    const ytDlpCmd = `yt-dlp \
+    const ytDlpCmd = `yt-dlp ${proxyFlag} \
   --extractor-args "youtube:player_client=mweb" \
   --user-agent "Mozilla/5.0 (Linux; Android 10; SM-G981B) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/80.0.3987.162 Mobile Safari/537.36" \
   --add-header "Referer:https://m.youtube.com/" \
@@ -68,7 +69,7 @@ app.post('/generate', async (req, res) => {
       }
 
       console.log('Primary mweb client download failed, retrying with cookies...');
-      const ytDlpCmdWithCookies = `yt-dlp ${cookiesFlag} \
+    const ytDlpCmdWithCookies = `yt-dlp ${proxyFlag} ${cookiesFlag} \
   --extractor-args "youtube:player_client=mweb" \
   --user-agent "Mozilla/5.0 (Linux; Android 10; SM-G981B) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/80.0.3987.162 Mobile Safari/537.36" \
   --add-header "Referer:https://m.youtube.com/" \
