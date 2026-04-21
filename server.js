@@ -13,6 +13,10 @@ app.use('/clips', express.static('/tmp/clips'));
 
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
+async function updateYtDlp() {
+  try { await run('yt-dlp -U'); } catch(e) { console.log('yt-dlp update skipped'); }
+}
+
 function run(cmd) {
   return new Promise((resolve, reject) => {
     exec(cmd, { maxBuffer: 1024 * 1024 * 100 }, (err, stdout, stderr) => {
@@ -41,7 +45,7 @@ app.post('/generate', async (req, res) => {
 
     console.log('Downloading video...');
     const videoPath = `${tmpDir}/video.mp4`;
-    await run(`yt-dlp -f "best[height<=720]" -o "${videoPath}" "${youtubeUrl}"`);
+  await run(`yt-dlp --extractor-args "youtube:player_client=web" --add-headers "User-Agent:Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36" -f "best[height<=720][ext=mp4]" --no-playlist -o "${videoPath}" "${youtubeUrl}"`);
 
     console.log('Extracting audio...');
     const audioPath = `${tmpDir}/audio.mp3`;
@@ -128,4 +132,5 @@ Rules:
 });
 
 const PORT = process.env.PORT || 8000;
+updateYtDlp();
 app.listen(PORT, () => console.log(`Trueclip backend running on port ${PORT}`));
