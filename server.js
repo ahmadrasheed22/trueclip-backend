@@ -48,10 +48,9 @@ app.post('/generate', async (req, res) => {
     const cookiesPath = path.join(process.cwd(), 'cookies.txt');
     const cookiesFlag = fs.existsSync(cookiesPath) ? `--cookies "${cookiesPath}"` : '';
     const ytDlpCmd = `yt-dlp \
-  --extractor-args "youtube:player_client=tv,web_safari" \
-  --extractor-args "youtube:player_skip=webpage,configs" \
-  --user-agent "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/135.0.0.0 Safari/537.36" \
-  --add-header "Referer:https://www.youtube.com/" \
+  --extractor-args "youtube:player_client=mweb" \
+  --user-agent "Mozilla/5.0 (Linux; Android 10; SM-G981B) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/80.0.3987.162 Mobile Safari/537.36" \
+  --add-header "Referer:https://m.youtube.com/" \
   -f "best[height<=720][ext=mp4]/best[height<=720]/best" \
   --merge-output-format mp4 \
   --no-playlist \
@@ -68,12 +67,11 @@ app.post('/generate', async (req, res) => {
         throw downloadError;
       }
 
-      console.log('Primary TV client download failed, retrying with cookies...');
+      console.log('Primary mweb client download failed, retrying with cookies...');
       const ytDlpCmdWithCookies = `yt-dlp ${cookiesFlag} \
-  --extractor-args "youtube:player_client=tv,web_safari" \
-  --extractor-args "youtube:player_skip=webpage,configs" \
-  --user-agent "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/135.0.0.0 Safari/537.36" \
-  --add-header "Referer:https://www.youtube.com/" \
+  --extractor-args "youtube:player_client=mweb" \
+  --user-agent "Mozilla/5.0 (Linux; Android 10; SM-G981B) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/80.0.3987.162 Mobile Safari/537.36" \
+  --add-header "Referer:https://m.youtube.com/" \
   -f "best[height<=720][ext=mp4]/best[height<=720]/best" \
   --merge-output-format mp4 \
   --no-playlist \
