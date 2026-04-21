@@ -46,8 +46,11 @@ app.post('/generate', async (req, res) => {
     console.log('Downloading video...');
     const videoPath = `${tmpDir}/video.mp4`;
     const cookiesPath = path.join(process.cwd(), 'cookies.txt');
+    console.log('Cookies file exists:', fs.existsSync(cookiesPath));
+    console.log('Cookies path:', cookiesPath);
     const cookiesFlag = fs.existsSync(cookiesPath) ? `--cookies "${cookiesPath}"` : '';
-    await run(`yt-dlp ${cookiesFlag} --extractor-args "youtube:player_client=web" -f "best[height<=720][ext=mp4]" --no-playlist -o "${videoPath}" "${youtubeUrl}"`);
+    console.log('Cookies flag:', cookiesFlag);
+    await run(`yt-dlp ${cookiesFlag} --extractor-args "youtube:player_client=web" --add-headers "User-Agent:Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36" -f "best[height<=720][ext=mp4]" --no-playlist -o "${videoPath}" "${youtubeUrl}"`);
 
     console.log('Extracting audio...');
     const audioPath = `${tmpDir}/audio.mp3`;
