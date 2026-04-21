@@ -5,6 +5,7 @@ RUN apt-get update && apt-get install -y \
     python3 \
     python3-pip \
     curl \
+    unzip \
     && pip3 install -U yt-dlp --break-system-packages \
     && curl -fsSL https://deno.land/install.sh | DENO_INSTALL=/usr/local sh \
     && /usr/local/bin/deno --version \
