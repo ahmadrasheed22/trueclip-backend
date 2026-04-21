@@ -46,7 +46,7 @@ app.post('/generate', async (req, res) => {
     const videoPath = `${tmpDir}/video.mp4`;
     const ytDlpCmd = `yt-dlp \
   --extractor-args "youtube:player_client=android_vr" \
-  -f "best[height<=720][ext=mp4]/best[height<=720]/best" \
+  -f "best[height<=480][ext=mp4]/best[height<=480]/best" \
   --merge-output-format mp4 \
   --no-playlist \
   --no-check-certificates \
@@ -58,7 +58,7 @@ app.post('/generate', async (req, res) => {
 
     console.log('Extracting audio...');
     const audioPath = `${tmpDir}/audio.mp3`;
-    await run(`ffmpeg -i "${videoPath}" -q:a 0 -map a "${audioPath}" -y`);
+  await run(`ffmpeg -hide_banner -loglevel error -i "${videoPath}" -q:a 2 -map a "${audioPath}" -y`);
 
     console.log('Transcribing...');
     const transcription = await openai.audio.transcriptions.create({
@@ -118,7 +118,7 @@ Rules:
       const srtContent = `1\n00:00:00,000 --> 00:00:${Math.floor(duration).toString().padStart(2, '0')},000\n${moment.subtitle}\n`;
       fs.writeFileSync(srtPath, srtContent);
 
-      await run(`ffmpeg -ss ${moment.start} -i "${videoPath}" -t ${duration} -vf "scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920,subtitles='${srtPath}':force_style='FontSize=18,PrimaryColour=&HFFFFFF,OutlineColour=&H000000,Bold=1'" -c:v libx264 -c:a aac -preset fast "${clipPath}" -y`);
+      await run(`ffmpeg -hide_banner -loglevel error -ss ${moment.start} -i "${videoPath}" -t ${duration} -vf "scale=720:1280:force_original_aspect_ratio=increase,crop=720:1280,subtitles='${srtPath}':force_style='FontSize=14,PrimaryColour=&HFFFFFF,OutlineColour=&H000000,Bold=1'" -c:v libx264 -c:a aac -preset ultrafast -crf 28 -maxrate 1M -bufsize 2M "${clipPath}" -y`);
 
       clips.push({
         id: clipId,
