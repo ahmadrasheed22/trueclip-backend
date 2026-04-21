@@ -47,15 +47,43 @@ app.post('/generate', async (req, res) => {
     const videoPath = `${tmpDir}/video.mp4`;
     const cookiesPath = path.join(process.cwd(), 'cookies.txt');
     const cookiesFlag = fs.existsSync(cookiesPath) ? `--cookies "${cookiesPath}"` : '';
-    await run(`yt-dlp ${cookiesFlag} \
-  --extractor-args "youtube:player_client=ios,web" \
-  --user-agent "com.google.ios.youtube/19.29.1 (iPhone16,2; U; CPU iOS 17_5_1 like Mac OS X)" \
-  --add-headers "X-YouTube-Client-Name:5" \
-  --add-headers "X-YouTube-Client-Version:19.29.1" \
+    const ytDlpCmd = `yt-dlp \
+  --extractor-args "youtube:player_client=tv,web_safari" \
+  --extractor-args "youtube:player_skip=webpage,configs" \
+  --user-agent "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/135.0.0.0 Safari/537.36" \
+  --add-header "Referer:https://www.youtube.com/" \
   -f "best[height<=720][ext=mp4]/best[height<=720]/best" \
+  --merge-output-format mp4 \
   --no-playlist \
   --no-check-certificates \
-  -o "${videoPath}" "${youtubeUrl}"`);
+  --retries 10 \
+  --fragment-retries 10 \
+  --no-abort-on-error \
+  -o "${videoPath}" "${youtubeUrl}"`;
+
+    try {
+      await run(ytDlpCmd);
+    } catch (downloadError) {
+      if (!cookiesFlag) {
+        throw downloadError;
+      }
+
+      console.log('Primary TV client download failed, retrying with cookies...');
+      const ytDlpCmdWithCookies = `yt-dlp ${cookiesFlag} \
+  --extractor-args "youtube:player_client=tv,web_safari" \
+  --extractor-args "youtube:player_skip=webpage,configs" \
+  --user-agent "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/135.0.0.0 Safari/537.36" \
+  --add-header "Referer:https://www.youtube.com/" \
+  -f "best[height<=720][ext=mp4]/best[height<=720]/best" \
+  --merge-output-format mp4 \
+  --no-playlist \
+  --no-check-certificates \
+  --retries 10 \
+  --fragment-retries 10 \
+  --no-abort-on-error \
+  -o "${videoPath}" "${youtubeUrl}"`;
+      await run(ytDlpCmdWithCookies);
+    }
 
     console.log('Extracting audio...');
     const audioPath = `${tmpDir}/audio.mp3`;
