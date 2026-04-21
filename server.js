@@ -2,7 +2,6 @@ const express = require('express');
 const cors = require('cors');
 const { exec } = require('child_process');
 const fs = require('fs');
-const path = require('path');
 const { OpenAI } = require('openai');
 const { v4: uuidv4 } = require('uuid');
 
@@ -12,7 +11,6 @@ app.use(express.json());
 app.use('/clips', express.static('/tmp/clips'));
 
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
-const proxyFlag = process.env.PROXY_URL ? `--proxy "${process.env.PROXY_URL}"` : '';
 
 async function updateYtDlp() {
   try { await run('yt-dlp -U'); } catch(e) { console.log('yt-dlp update skipped'); }
@@ -46,12 +44,8 @@ app.post('/generate', async (req, res) => {
 
     console.log('Downloading video...');
     const videoPath = `${tmpDir}/video.mp4`;
-    const cookiesPath = path.join(process.cwd(), 'cookies.txt');
-    const cookiesFlag = fs.existsSync(cookiesPath) ? `--cookies "${cookiesPath}"` : '';
-    const ytDlpCmd = `yt-dlp ${proxyFlag} \
-  --extractor-args "youtube:player_client=mweb" \
-  --user-agent "Mozilla/5.0 (Linux; Android 10; SM-G981B) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/80.0.3987.162 Mobile Safari/537.36" \
-  --add-header "Referer:https://m.youtube.com/" \
+    const ytDlpCmd = `yt-dlp \
+  --extractor-args "youtube:player_client=android_vr" \
   -f "best[height<=720][ext=mp4]/best[height<=720]/best" \
   --merge-output-format mp4 \
   --no-playlist \
@@ -60,29 +54,7 @@ app.post('/generate', async (req, res) => {
   --fragment-retries 10 \
   --no-abort-on-error \
   -o "${videoPath}" "${youtubeUrl}"`;
-
-    try {
-      await run(ytDlpCmd);
-    } catch (downloadError) {
-      if (!cookiesFlag) {
-        throw downloadError;
-      }
-
-      console.log('Primary mweb client download failed, retrying with cookies...');
-    const ytDlpCmdWithCookies = `yt-dlp ${proxyFlag} ${cookiesFlag} \
-  --extractor-args "youtube:player_client=mweb" \
-  --user-agent "Mozilla/5.0 (Linux; Android 10; SM-G981B) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/80.0.3987.162 Mobile Safari/537.36" \
-  --add-header "Referer:https://m.youtube.com/" \
-  -f "best[height<=720][ext=mp4]/best[height<=720]/best" \
-  --merge-output-format mp4 \
-  --no-playlist \
-  --no-check-certificates \
-  --retries 10 \
-  --fragment-retries 10 \
-  --no-abort-on-error \
-  -o "${videoPath}" "${youtubeUrl}"`;
-      await run(ytDlpCmdWithCookies);
-    }
+    await run(ytDlpCmd);
 
     console.log('Extracting audio...');
     const audioPath = `${tmpDir}/audio.mp3`;
