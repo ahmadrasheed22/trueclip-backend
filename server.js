@@ -25,6 +25,33 @@ function run(cmd) {
   });
 }
 
+async function downloadWithRetry(youtubeUrl, videoPath, maxRetries = 3) {
+  for (let i = 0; i < maxRetries; i++) {
+    try {
+      const ytDlpCmd = `yt-dlp \
+        --extractor-args "youtube:player_client=android_vr" \
+        -f "best[height<=480][ext=mp4]/best[height<=480]/best" \
+        --merge-output-format mp4 \
+        --no-playlist \
+        --no-check-certificates \
+        --retries 10 \
+        --fragment-retries 10 \
+        --no-abort-on-error \
+        --sleep-requests 2 \
+        --sleep-interval 2 \
+        -o "${videoPath}" "${youtubeUrl}"`;
+
+      await run(ytDlpCmd);
+      return;
+    } catch (error) {
+      if (i === maxRetries - 1) throw error;
+
+      console.log(`Download failed, retrying in ${(i + 1) * 3} seconds...`);
+      await new Promise(resolve => setTimeout(resolve, (i + 1) * 3000));
+    }
+  }
+}
+
 app.get('/', (req, res) => res.json({ status: 'Trueclip backend running ✅' }));
 
 app.post('/generate', async (req, res) => {
@@ -33,6 +60,10 @@ app.post('/generate', async (req, res) => {
   if (!youtubeUrl) {
     return res.status(400).json({ error: 'YouTube URL is required' });
   }
+
+  // Add delay to avoid rate limiting
+  const delay = Math.floor(Math.random() * 3000) + 1000; // 1-4 seconds random delay
+  await new Promise(resolve => setTimeout(resolve, delay));
 
   const jobId = uuidv4();
   const tmpDir = `/tmp/${jobId}`;
@@ -44,17 +75,7 @@ app.post('/generate', async (req, res) => {
 
     console.log('Downloading video...');
     const videoPath = `${tmpDir}/video.mp4`;
-    const ytDlpCmd = `yt-dlp \
-  --extractor-args "youtube:player_client=android_vr" \
-  -f "best[height<=480][ext=mp4]/best[height<=480]/best" \
-  --merge-output-format mp4 \
-  --no-playlist \
-  --no-check-certificates \
-  --retries 10 \
-  --fragment-retries 10 \
-  --no-abort-on-error \
-  -o "${videoPath}" "${youtubeUrl}"`;
-    await run(ytDlpCmd);
+    await downloadWithRetry(youtubeUrl, videoPath);
 
     console.log('Extracting audio...');
     const audioPath = `${tmpDir}/audio.mp3`;
