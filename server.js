@@ -1,10 +1,11 @@
 const express = require('express');
 const cors = require('cors');
 const { exec } = require('child_process');
+const util = require('util');
 const fs = require('fs');
-const fetch = require('node-fetch');
 const { OpenAI } = require('openai');
 const { v4: uuidv4 } = require('uuid');
+const execPromise = util.promisify(exec);
 
 const app = express();
 app.use(cors());
@@ -90,55 +91,36 @@ app.post('/generate', async (req, res) => {
     fs.mkdirSync(tmpDir, { recursive: true });
     fs.mkdirSync(clipsDir, { recursive: true });
 
-    console.log('Getting video download URL via RapidAPI...');
+    console.log('Getting video download URL via yt-dlp...');
     const videoId = youtubeUrl.match(/(?:v=|youtu\.be\/)([^&\n?#]+)/)?.[1];
     if (!videoId) throw new Error('Invalid YouTube URL');
 
     const targetUrl = `https://www.youtube.com/watch?v=${videoId}`;
-
-    console.log(`Fetching from RapidAPI for: ${targetUrl}`);
-
-    const rapidRes = await fetch(
-      `https://youtube-downloader2.p.rapidapi.com/youtube/download?url=${encodeURIComponent(targetUrl)}`,
-      {
-        method: 'GET',
-        headers: {
-          'x-rapidapi-host': 'youtube-downloader2.p.rapidapi.com',
-          'x-rapidapi-key': process.env.RAPIDAPI_KEY
-        }
-      }
-    );
-
-    // Get the raw text response first to see what we actually received
-    const rawResponse = await rapidRes.text();
-    console.log("Raw API Response:", rawResponse);
-
-    // Check if the response status is OK
-    if (!rapidRes.ok) {
-      console.error("RapidAPI Status:", rapidRes.status);
-      throw new Error(`RapidAPI request failed with status ${rapidRes.status}. Body: ${rawResponse}`);
-    }
-
-    let rapidData;
-
-    // Try to parse JSON, but handle errors gracefully
-    try {
-      rapidData = JSON.parse(rawResponse);
-    } catch (err) {
-      console.error("JSON Parse Error:", err);
-      throw new Error(`API returned invalid JSON. Response was: ${rawResponse}`);
-    }
-
-    const videoDownloadUrl = rapidData?.link;
-
-    if (!videoDownloadUrl) {
-      console.error("Parsed Data:", rapidData);
-      throw new Error('No download link found in API response');
-    }
-
     const videoPath = `${tmpDir}/video.mp4`;
-    console.log("Download link found, starting download...");
-    await downloadFile(videoDownloadUrl, videoPath);
+
+    console.log(`Starting download with yt-dlp for: ${targetUrl}`);
+    try {
+      // --merge-output-format mp4 ensures we get an mp4 file even if yt-dlp picks separate streams
+      const command = `yt-dlp -f "best[ext=mp4]/best" --merge-output-format mp4 --no-playlist -o "${videoPath}" "${targetUrl}"`;
+
+      const { stderr } = await execPromise(command);
+
+      // yt-dlp sometimes prints progress to stderr, so we log it but don't error on it unless exit code is bad
+      if (stderr && !stderr.includes('100%')) {
+        console.log('yt-dlp logs:', stderr);
+      }
+
+      console.log('Download complete.');
+    } catch (error) {
+      const stderr =
+        error && typeof error === 'object' && 'stderr' in error
+          ? String(error.stderr)
+          : '';
+      const message = stderr || (error instanceof Error ? error.message : String(error));
+
+      console.error('yt-dlp failed:', message);
+      throw new Error(`Failed to download video: ${message}`);
+    }
 
     console.log('Extracting audio...');
     const audioPath = `${tmpDir}/audio.mp3`;
