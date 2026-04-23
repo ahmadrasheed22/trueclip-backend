@@ -2,7 +2,7 @@ const express = require('express');
 const cors = require('cors');
 const { exec } = require('child_process');
 const fs = require('fs');
-const path = require('path');
+const fetch = require('node-fetch');
 const { OpenAI } = require('openai');
 const { v4: uuidv4 } = require('uuid');
 
@@ -53,18 +53,44 @@ app.post('/generate', async (req, res) => {
     fs.mkdirSync(tmpDir, { recursive: true });
     fs.mkdirSync(clipsDir, { recursive: true });
 
-    console.log('Downloading video...');
+    console.log('Getting video info...');
+    const videoId = youtubeUrl.match(/(?:v=|youtu\.be\/)([^&\n?#]+)/)?.[1];
+    if (!videoId) throw new Error('Invalid YouTube URL');
+
+    // Get video stream URL via Piped API (free YouTube proxy)
+    const pipedResponse = await fetch(`https://pipedapi.kavin.rocks/streams/${videoId}`);
+    const pipedData = await pipedResponse.json();
+
+    if (!pipedData || pipedData.error) {
+      throw new Error('Could not fetch video: ' + (pipedData?.error || 'Unknown error'));
+    }
+
+    // Get best video stream under 720p
+    const videoStream = pipedData.videoStreams
+      ?.filter(s => s.quality && parseInt(s.quality) <= 720 && s.mimeType?.includes('video/mp4'))
+      ?.sort((a, b) => parseInt(b.quality) - parseInt(a.quality))?.[0];
+
+    const audioStream = pipedData.audioStreams
+      ?.filter(s => s.mimeType?.includes('audio'))
+      ?.sort((a, b) => b.bitrate - a.bitrate)?.[0];
+
+    if (!videoStream && !audioStream) throw new Error('No streams found');
+
+    console.log('Downloading video stream...');
     const videoPath = `${tmpDir}/video.mp4`;
-    const cookiesPath = path.join(process.cwd(), 'cookies.txt');
-    const cookiesFlag = fs.existsSync(cookiesPath) ? `--cookies "${cookiesPath}"` : '';
-    await run(`yt-dlp ${cookiesFlag} \
-  --extractor-args "youtube:player_client=ios" \
-  --user-agent "com.google.ios.youtube/19.29.1 (iPhone16,2; U; CPU iOS 17_5_1 like Mac OS X;)" \
-  -f "bestvideo[height<=720][ext=mp4]+bestaudio[ext=m4a]/best[height<=720]/best" \
-  --merge-output-format mp4 \
-  --no-playlist \
-  --retries 3 \
-  -o "${videoPath}" "${youtubeUrl}"`);
+    const videoStreamPath = `${tmpDir}/videoonly.mp4`;
+    const audioStreamPath = `${tmpDir}/audio_stream.m4a`;
+
+    // Download video and audio separately then merge
+    const streamUrl = videoStream?.url || pipedData.hls;
+    await run(`ffmpeg -i "${streamUrl}" -c copy "${videoStreamPath}" -y`);
+
+    if (audioStream?.url) {
+      await run(`ffmpeg -i "${audioStream.url}" -c copy "${audioStreamPath}" -y`);
+      await run(`ffmpeg -i "${videoStreamPath}" -i "${audioStreamPath}" -c copy "${videoPath}" -y`);
+    } else {
+      await run(`cp "${videoStreamPath}" "${videoPath}"`);
+    }
 
     console.log('Extracting audio...');
     const audioPath = `${tmpDir}/audio.mp3`;
