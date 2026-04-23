@@ -91,8 +91,15 @@ app.post('/generate', async (req, res) => {
     fs.mkdirSync(clipsDir, { recursive: true });
 
     console.log('Getting video download URL via RapidAPI...');
+    const videoId = youtubeUrl.match(/(?:v=|youtu\.be\/)([^&\n?#]+)/)?.[1];
+    if (!videoId) throw new Error('Invalid YouTube URL');
+
+    const targetUrl = `https://www.youtube.com/watch?v=${videoId}`;
+
+    console.log(`Fetching from RapidAPI for: ${targetUrl}`);
+
     const rapidRes = await fetch(
-      `https://youtube-downloader2.p.rapidapi.com/youtube/download?url=${encodeURIComponent(youtubeUrl)}`,
+      `https://youtube-downloader2.p.rapidapi.com/youtube/download?url=${encodeURIComponent(targetUrl)}`,
       {
         method: 'GET',
         headers: {
@@ -102,22 +109,36 @@ app.post('/generate', async (req, res) => {
       }
     );
 
-    const rapidData = await rapidRes.json();
-    console.log('RapidAPI response keys:', Object.keys(rapidData || {}));
-    console.log('RapidAPI sample:', JSON.stringify(rapidData).slice(0, 500));
+    // Get the raw text response first to see what we actually received
+    const rawResponse = await rapidRes.text();
+    console.log("Raw API Response:", rawResponse);
 
-    if (!rapidData || rapidData.error) {
-      throw new Error('RapidAPI error: ' + JSON.stringify(rapidData));
+    // Check if the response status is OK
+    if (!rapidRes.ok) {
+      console.error("RapidAPI Status:", rapidRes.status);
+      throw new Error(`RapidAPI request failed with status ${rapidRes.status}. Body: ${rawResponse}`);
     }
 
-    const downloadUrl = rapidData?.link;
-    if (!downloadUrl) {
-      throw new Error('RapidAPI error: missing download link in response.');
+    let rapidData;
+
+    // Try to parse JSON, but handle errors gracefully
+    try {
+      rapidData = JSON.parse(rawResponse);
+    } catch (err) {
+      console.error("JSON Parse Error:", err);
+      throw new Error(`API returned invalid JSON. Response was: ${rawResponse}`);
+    }
+
+    const videoDownloadUrl = rapidData?.link;
+
+    if (!videoDownloadUrl) {
+      console.error("Parsed Data:", rapidData);
+      throw new Error('No download link found in API response');
     }
 
     const videoPath = `${tmpDir}/video.mp4`;
-    console.log('Downloading video from:', downloadUrl.slice(0, 100));
-    await downloadFile(downloadUrl, videoPath);
+    console.log("Download link found, starting download...");
+    await downloadFile(videoDownloadUrl, videoPath);
 
     console.log('Extracting audio...');
     const audioPath = `${tmpDir}/audio.mp3`;
