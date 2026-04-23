@@ -95,7 +95,7 @@ app.post('/generate', async (req, res) => {
     if (!videoId) throw new Error('Invalid YouTube URL');
 
     const rapidRes = await fetch(
-      `https://youtube-video-and-shorts-downloader.p.rapidapi.com/video?id=${videoId}`,
+      `https://youtube-video-and-shorts-downloader.p.rapidapi.com/download/streams?id=${videoId}`,
       {
         method: 'GET',
         headers: {
