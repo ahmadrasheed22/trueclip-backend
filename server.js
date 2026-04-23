@@ -15,7 +15,12 @@ app.use('/clips', express.static('/tmp/clips'));
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
 async function updateYtDlp() {
-  try { await run('yt-dlp -U'); } catch(e) { console.log('yt-dlp update skipped'); }
+  try {
+    const version = await run('yt-dlp --version');
+    console.log('yt-dlp version:', version.trim());
+  } catch(e) {
+    console.log('yt-dlp version check failed:', e);
+  }
 }
 
 function run(cmd) {

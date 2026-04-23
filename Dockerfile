@@ -5,18 +5,12 @@ RUN apt-get update && apt-get install -y \
     python3 \
     python3-pip \
     curl \
-    unzip \
-    git \
-    && curl -fsSL https://deno.land/install.sh | DENO_INSTALL=/usr/local sh \
-    && ([ -x /usr/local/bin/deno ] || mv /root/.deno/bin/deno /usr/local/bin/deno) \
-    && pip3 install -U yt-dlp --break-system-packages \
-    && deno --version \
-    && yt-dlp --version \
-    && apt-get clean \
-    && rm -rf /var/lib/apt/lists/*
+    wget \
+    && apt-get clean
 
-ENV DENO_PATH=/usr/local/bin/deno
-ENV YTDLP_EJS_BACKEND=/usr/local/bin/deno
+# Install latest yt-dlp directly from GitHub releases (always latest)
+RUN wget https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp -O /usr/local/bin/yt-dlp \
+    && chmod a+rx /usr/local/bin/yt-dlp
 
 WORKDIR /app
 
