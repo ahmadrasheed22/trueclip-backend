@@ -53,77 +53,39 @@ app.post('/generate', async (req, res) => {
     fs.mkdirSync(tmpDir, { recursive: true });
     fs.mkdirSync(clipsDir, { recursive: true });
 
-    console.log('Getting video info...');
+    console.log('Getting video download URL via RapidAPI...');
     const videoId = youtubeUrl.match(/(?:v=|youtu\.be\/)([^&\n?#]+)/)?.[1];
     if (!videoId) throw new Error('Invalid YouTube URL');
 
-    // Multiple Piped API instances as fallback
-    const pipedInstances = [
-      'https://pipedapi.kavin.rocks',
-      'https://piped-api.garudalinux.org',
-      'https://pipedapi.tokhmi.xyz',
-      'https://pipedapi.moomoo.me',
-      'https://api.piped.projectsegfau.lt',
-    ];
-
-    let pipedData = null;
-    for (const instance of pipedInstances) {
-      try {
-        console.log(`Trying Piped instance: ${instance}`);
-        const res = await fetch(`${instance}/streams/${videoId}`, {
-          headers: { 'User-Agent': 'Mozilla/5.0' },
-          timeout: 10000
-        });
-        const text = await res.text();
-        if (!text || text.trim() === '') continue;
-        const data = JSON.parse(text);
-        if (data && !data.error && (data.videoStreams || data.hls)) {
-          pipedData = data;
-          console.log(`Success with instance: ${instance}`);
-          break;
+    const rapidRes = await fetch(
+      `https://youtube-media-downloader.p.rapidapi.com/v2/video/details?videoId=${videoId}`,
+      {
+        method: 'GET',
+        headers: {
+          'x-rapidapi-host': 'youtube-media-downloader.p.rapidapi.com',
+          'x-rapidapi-key': process.env.RAPIDAPI_KEY
         }
-      } catch(e) {
-        console.log(`Instance ${instance} failed:`, e.message);
-        continue;
       }
+    );
+
+    const rapidData = await rapidRes.json();
+    console.log('RapidAPI status:', rapidData?.status);
+
+    if (!rapidData || rapidData.status === false) {
+      throw new Error('RapidAPI error: ' + JSON.stringify(rapidData));
     }
 
-    if (!pipedData) throw new Error('All Piped instances failed. Please try again later.');
+    // Get best video under 720p
+    const videos = rapidData?.videos?.items || [];
+    const videoFormat = videos
+      .filter(v => v.height && v.height <= 720 && v.url)
+      .sort((a, b) => b.height - a.height)[0];
 
+    if (!videoFormat?.url) throw new Error('No video format found');
+
+    console.log('Downloading video...');
     const videoPath = `${tmpDir}/video.mp4`;
-
-    // Try HLS stream first (most reliable)
-    if (pipedData.hls) {
-      console.log('Downloading via HLS...');
-      await run(`ffmpeg -i "${pipedData.hls}" \
-    -c:v libx264 -c:a aac \
-    -f mp4 "${videoPath}" -y`);
-    } else {
-      // Try direct video stream
-      const videoStream = pipedData.videoStreams
-        ?.filter(s => s.quality && parseInt(s.quality) <= 720 && s.mimeType?.includes('video'))
-        ?.sort((a, b) => parseInt(b.quality) - parseInt(a.quality))?.[0];
-
-      const audioStream = pipedData.audioStreams
-        ?.filter(s => s.mimeType?.includes('audio'))
-        ?.sort((a, b) => b.bitrate - a.bitrate)?.[0];
-
-      if (!videoStream) throw new Error('No video streams found');
-
-      const videoStreamPath = `${tmpDir}/videoonly.mp4`;
-      const audioStreamPath = `${tmpDir}/audio_stream.m4a`;
-
-      console.log('Downloading video stream...');
-      await run(`ffmpeg -i "${videoStream.url}" -c copy "${videoStreamPath}" -y`);
-
-      if (audioStream?.url) {
-        console.log('Downloading audio stream...');
-        await run(`ffmpeg -i "${audioStream.url}" -c copy "${audioStreamPath}" -y`);
-        await run(`ffmpeg -i "${videoStreamPath}" -i "${audioStreamPath}" -c copy "${videoPath}" -y`);
-      } else {
-        await run(`cp "${videoStreamPath}" "${videoPath}"`);
-      }
-    }
+    await run(`ffmpeg -i "${videoFormat.url}" -c copy "${videoPath}" -y`);
 
     console.log('Extracting audio...');
     const audioPath = `${tmpDir}/audio.mp3`;
