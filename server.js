@@ -57,39 +57,72 @@ app.post('/generate', async (req, res) => {
     const videoId = youtubeUrl.match(/(?:v=|youtu\.be\/)([^&\n?#]+)/)?.[1];
     if (!videoId) throw new Error('Invalid YouTube URL');
 
-    // Get video stream URL via Piped API (free YouTube proxy)
-    const pipedResponse = await fetch(`https://pipedapi.kavin.rocks/streams/${videoId}`);
-    const pipedData = await pipedResponse.json();
+    // Multiple Piped API instances as fallback
+    const pipedInstances = [
+      'https://pipedapi.kavin.rocks',
+      'https://piped-api.garudalinux.org',
+      'https://pipedapi.tokhmi.xyz',
+      'https://pipedapi.moomoo.me',
+      'https://api.piped.projectsegfau.lt',
+    ];
 
-    if (!pipedData || pipedData.error) {
-      throw new Error('Could not fetch video: ' + (pipedData?.error || 'Unknown error'));
+    let pipedData = null;
+    for (const instance of pipedInstances) {
+      try {
+        console.log(`Trying Piped instance: ${instance}`);
+        const res = await fetch(`${instance}/streams/${videoId}`, {
+          headers: { 'User-Agent': 'Mozilla/5.0' },
+          timeout: 10000
+        });
+        const text = await res.text();
+        if (!text || text.trim() === '') continue;
+        const data = JSON.parse(text);
+        if (data && !data.error && (data.videoStreams || data.hls)) {
+          pipedData = data;
+          console.log(`Success with instance: ${instance}`);
+          break;
+        }
+      } catch(e) {
+        console.log(`Instance ${instance} failed:`, e.message);
+        continue;
+      }
     }
 
-    // Get best video stream under 720p
-    const videoStream = pipedData.videoStreams
-      ?.filter(s => s.quality && parseInt(s.quality) <= 720 && s.mimeType?.includes('video/mp4'))
-      ?.sort((a, b) => parseInt(b.quality) - parseInt(a.quality))?.[0];
+    if (!pipedData) throw new Error('All Piped instances failed. Please try again later.');
 
-    const audioStream = pipedData.audioStreams
-      ?.filter(s => s.mimeType?.includes('audio'))
-      ?.sort((a, b) => b.bitrate - a.bitrate)?.[0];
-
-    if (!videoStream && !audioStream) throw new Error('No streams found');
-
-    console.log('Downloading video stream...');
     const videoPath = `${tmpDir}/video.mp4`;
-    const videoStreamPath = `${tmpDir}/videoonly.mp4`;
-    const audioStreamPath = `${tmpDir}/audio_stream.m4a`;
 
-    // Download video and audio separately then merge
-    const streamUrl = videoStream?.url || pipedData.hls;
-    await run(`ffmpeg -i "${streamUrl}" -c copy "${videoStreamPath}" -y`);
-
-    if (audioStream?.url) {
-      await run(`ffmpeg -i "${audioStream.url}" -c copy "${audioStreamPath}" -y`);
-      await run(`ffmpeg -i "${videoStreamPath}" -i "${audioStreamPath}" -c copy "${videoPath}" -y`);
+    // Try HLS stream first (most reliable)
+    if (pipedData.hls) {
+      console.log('Downloading via HLS...');
+      await run(`ffmpeg -i "${pipedData.hls}" \
+    -c:v libx264 -c:a aac \
+    -f mp4 "${videoPath}" -y`);
     } else {
-      await run(`cp "${videoStreamPath}" "${videoPath}"`);
+      // Try direct video stream
+      const videoStream = pipedData.videoStreams
+        ?.filter(s => s.quality && parseInt(s.quality) <= 720 && s.mimeType?.includes('video'))
+        ?.sort((a, b) => parseInt(b.quality) - parseInt(a.quality))?.[0];
+
+      const audioStream = pipedData.audioStreams
+        ?.filter(s => s.mimeType?.includes('audio'))
+        ?.sort((a, b) => b.bitrate - a.bitrate)?.[0];
+
+      if (!videoStream) throw new Error('No video streams found');
+
+      const videoStreamPath = `${tmpDir}/videoonly.mp4`;
+      const audioStreamPath = `${tmpDir}/audio_stream.m4a`;
+
+      console.log('Downloading video stream...');
+      await run(`ffmpeg -i "${videoStream.url}" -c copy "${videoStreamPath}" -y`);
+
+      if (audioStream?.url) {
+        console.log('Downloading audio stream...');
+        await run(`ffmpeg -i "${audioStream.url}" -c copy "${audioStreamPath}" -y`);
+        await run(`ffmpeg -i "${videoStreamPath}" -i "${audioStreamPath}" -c copy "${videoPath}" -y`);
+      } else {
+        await run(`cp "${videoStreamPath}" "${videoPath}"`);
+      }
     }
 
     console.log('Extracting audio...');
