@@ -83,9 +83,28 @@ app.post('/generate', async (req, res) => {
 
     if (!videoFormat?.url) throw new Error('No video format found');
 
-    console.log('Downloading video...');
+    // Try to get audio stream too
+    const audios = rapidData?.audios?.items || [];
+    const audioFormat = audios
+      .filter(a => a.url)
+      .sort((a, b) => (b.bitrate || 0) - (a.bitrate || 0))[0];
+
     const videoPath = `${tmpDir}/video.mp4`;
-    await run(`ffmpeg -i "${videoFormat.url}" -c copy "${videoPath}" -y`);
+    if (audioFormat?.url) {
+      // Download video and audio separately then merge
+      const videoOnlyPath = `${tmpDir}/videoonly.mp4`;
+      const audioOnlyPath = `${tmpDir}/audio.m4a`;
+      console.log('Downloading video stream...');
+      await run(`ffmpeg -i "${videoFormat.url}" -c copy "${videoOnlyPath}" -y`);
+      console.log('Downloading audio stream...');
+      await run(`ffmpeg -i "${audioFormat.url}" -c copy "${audioOnlyPath}" -y`);
+      console.log('Merging video and audio...');
+      await run(`ffmpeg -i "${videoOnlyPath}" -i "${audioOnlyPath}" -c:v copy -c:a aac "${videoPath}" -y`);
+    } else {
+      // No separate audio — download as is
+      console.log('Downloading video with audio...');
+      await run(`ffmpeg -i "${videoFormat.url}" -c copy "${videoPath}" -y`);
+    }
 
     console.log('Extracting audio...');
     const audioPath = `${tmpDir}/audio.mp3`;
