@@ -95,52 +95,41 @@ app.post('/generate', async (req, res) => {
     if (!videoId) throw new Error('Invalid YouTube URL');
 
     const rapidRes = await fetch(
-      `https://youtube-media-downloader.p.rapidapi.com/v2/video/details?videoId=${videoId}`,
+      `https://youtube-video-and-shorts-downloader.p.rapidapi.com/video?id=${videoId}`,
       {
         method: 'GET',
         headers: {
-          'x-rapidapi-host': 'youtube-media-downloader.p.rapidapi.com',
+          'x-rapidapi-host': 'youtube-video-and-shorts-downloader.p.rapidapi.com',
           'x-rapidapi-key': process.env.RAPIDAPI_KEY
         }
       }
     );
 
     const rapidData = await rapidRes.json();
-    console.log('RapidAPI status:', rapidData?.status);
+    console.log('RapidAPI response keys:', Object.keys(rapidData || {}));
+    console.log('RapidAPI sample:', JSON.stringify(rapidData).slice(0, 500));
 
-    if (!rapidData || rapidData.status === false) {
+    if (!rapidData || rapidData.error) {
       throw new Error('RapidAPI error: ' + JSON.stringify(rapidData));
     }
 
-    // Get best video under 720p
-    const videos = rapidData?.videos?.items || [];
-    const videoFormat = videos
-      .filter(v => v.height && v.height <= 720 && v.url)
-      .sort((a, b) => b.height - a.height)[0];
-
-    if (!videoFormat?.url) throw new Error('No video format found');
-
-    // Try to get audio stream too
-    const audios = rapidData?.audios?.items || [];
-    const audioFormat = audios
-      .filter(a => a.url)
-      .sort((a, b) => (b.bitrate || 0) - (a.bitrate || 0))[0];
-
+    // Try to find download URL - log everything to see structure
     const videoPath = `${tmpDir}/video.mp4`;
-    const videoOnlyPath = `${tmpDir}/videoonly.mp4`;
-    const audioOnlyPath = `${tmpDir}/audio.m4a`;
 
-    console.log('Downloading video stream...');
-    await downloadFile(videoFormat.url, videoOnlyPath);
+    // Get all possible video formats
+    const formats = rapidData?.formats || rapidData?.videos || rapidData?.links || [];
+    console.log('Formats found:', formats.length);
 
-    if (audioFormat?.url) {
-      console.log('Downloading audio stream...');
-      await downloadFile(audioFormat.url, audioOnlyPath);
-      console.log('Merging...');
-      await run(`ffmpeg -i "${videoOnlyPath}" -i "${audioOnlyPath}" -c:v copy -c:a aac "${videoPath}" -y`);
-    } else {
-      await run(`cp "${videoOnlyPath}" "${videoPath}"`);
+    const videoFormat = formats
+      .filter(f => f.url && (f.mimeType?.includes('video') || f.quality || f.ext === 'mp4'))
+      .sort((a, b) => (parseInt(b.quality) || 0) - (parseInt(a.quality) || 0))[0];
+
+    if (!videoFormat?.url) {
+      throw new Error('No download URL found. Full response: ' + JSON.stringify(rapidData).slice(0, 1000));
     }
+
+    console.log('Downloading video from:', videoFormat.url.slice(0, 100));
+    await downloadFile(videoFormat.url, videoPath);
 
     console.log('Extracting audio...');
     const audioPath = `${tmpDir}/audio.mp3`;
