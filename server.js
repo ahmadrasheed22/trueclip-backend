@@ -94,16 +94,29 @@ app.post('/generate', async (req, res) => {
       // Download video and audio separately then merge
       const videoOnlyPath = `${tmpDir}/videoonly.mp4`;
       const audioOnlyPath = `${tmpDir}/audio.m4a`;
+
       console.log('Downloading video stream...');
-      await run(`ffmpeg -i "${videoFormat.url}" -c copy "${videoOnlyPath}" -y`);
+      await run(`curl -L --max-time 120 --retry 3 \
+  -H "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36" \
+  -H "Referer: https://www.youtube.com/" \
+  "${videoFormat.url}" -o "${videoOnlyPath}"`);
+
       console.log('Downloading audio stream...');
-      await run(`ffmpeg -i "${audioFormat.url}" -c copy "${audioOnlyPath}" -y`);
+      await run(`curl -L --max-time 120 --retry 3 \
+  -H "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36" \
+  -H "Referer: https://www.youtube.com/" \
+  "${audioFormat.url}" -o "${audioOnlyPath}"`);
+
       console.log('Merging video and audio...');
-      await run(`ffmpeg -i "${videoOnlyPath}" -i "${audioOnlyPath}" -c:v copy -c:a aac "${videoPath}" -y`);
+      await run(`ffmpeg -i "${videoOnlyPath}" -i "${audioOnlyPath}" \
+  -c:v copy -c:a aac "${videoPath}" -y`);
     } else {
       // No separate audio — download as is
       console.log('Downloading video with audio...');
-      await run(`ffmpeg -i "${videoFormat.url}" -c copy "${videoPath}" -y`);
+      await run(`curl -L --max-time 120 --retry 3 \
+  -H "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36" \
+  -H "Referer: https://www.youtube.com/" \
+  "${videoFormat.url}" -o "${videoPath}"`);
     }
 
     console.log('Extracting audio...');
