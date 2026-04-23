@@ -34,6 +34,43 @@ function run(cmd) {
 
 app.get('/', (req, res) => res.json({ status: 'Trueclip backend running ✅' }));
 
+function downloadFile(url, destPath) {
+  return new Promise((resolve, reject) => {
+    const https = require('https');
+    const http = require('http');
+    const fs = require('fs');
+    const protocol = url.startsWith('https') ? https : http;
+    
+    const file = fs.createWriteStream(destPath);
+    const options = {
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+        'Referer': 'https://www.youtube.com/',
+        'Origin': 'https://www.youtube.com'
+      }
+    };
+
+    function doRequest(reqUrl) {
+      protocol.get(reqUrl, options, (response) => {
+        if (response.statusCode === 301 || response.statusCode === 302 || response.statusCode === 303) {
+          doRequest(response.headers.location);
+          return;
+        }
+        if (response.statusCode !== 200) {
+          reject(new Error(`Download failed: ${response.statusCode}`));
+          return;
+        }
+        response.pipe(file);
+        file.on('finish', () => { file.close(); resolve(); });
+      }).on('error', (err) => {
+        fs.unlink(destPath, () => {});
+        reject(err);
+      });
+    }
+    doRequest(url);
+  });
+}
+
 app.post('/generate', async (req, res) => {
   const { youtubeUrl } = req.body;
 
@@ -90,33 +127,19 @@ app.post('/generate', async (req, res) => {
       .sort((a, b) => (b.bitrate || 0) - (a.bitrate || 0))[0];
 
     const videoPath = `${tmpDir}/video.mp4`;
+    const videoOnlyPath = `${tmpDir}/videoonly.mp4`;
+    const audioOnlyPath = `${tmpDir}/audio.m4a`;
+
+    console.log('Downloading video stream...');
+    await downloadFile(videoFormat.url, videoOnlyPath);
+
     if (audioFormat?.url) {
-      // Download video and audio separately then merge
-      const videoOnlyPath = `${tmpDir}/videoonly.mp4`;
-      const audioOnlyPath = `${tmpDir}/audio.m4a`;
-
-      console.log('Downloading video stream...');
-      await run(`curl -L --max-time 120 --retry 3 \
-  -H "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36" \
-  -H "Referer: https://www.youtube.com/" \
-  "${videoFormat.url}" -o "${videoOnlyPath}"`);
-
       console.log('Downloading audio stream...');
-      await run(`curl -L --max-time 120 --retry 3 \
-  -H "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36" \
-  -H "Referer: https://www.youtube.com/" \
-  "${audioFormat.url}" -o "${audioOnlyPath}"`);
-
-      console.log('Merging video and audio...');
-      await run(`ffmpeg -i "${videoOnlyPath}" -i "${audioOnlyPath}" \
-  -c:v copy -c:a aac "${videoPath}" -y`);
+      await downloadFile(audioFormat.url, audioOnlyPath);
+      console.log('Merging...');
+      await run(`ffmpeg -i "${videoOnlyPath}" -i "${audioOnlyPath}" -c:v copy -c:a aac "${videoPath}" -y`);
     } else {
-      // No separate audio — download as is
-      console.log('Downloading video with audio...');
-      await run(`curl -L --max-time 120 --retry 3 \
-  -H "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36" \
-  -H "Referer: https://www.youtube.com/" \
-  "${videoFormat.url}" -o "${videoPath}"`);
+      await run(`cp "${videoOnlyPath}" "${videoPath}"`);
     }
 
     console.log('Extracting audio...');
