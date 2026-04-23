@@ -9,7 +9,7 @@ RUN apt-get update && apt-get install -y \
     git \
     && curl -fsSL https://deno.land/install.sh | DENO_INSTALL=/usr/local sh \
     && ([ -x /usr/local/bin/deno ] || mv /root/.deno/bin/deno /usr/local/bin/deno) \
-    && pip3 install --upgrade --force-reinstall yt-dlp --break-system-packages \
+    && pip3 install -U yt-dlp --break-system-packages \
     && deno --version \
     && yt-dlp --version \
     && apt-get clean \

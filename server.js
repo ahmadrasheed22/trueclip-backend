@@ -2,6 +2,7 @@ const express = require('express');
 const cors = require('cors');
 const { exec } = require('child_process');
 const fs = require('fs');
+const path = require('path');
 const { OpenAI } = require('openai');
 const { v4: uuidv4 } = require('uuid');
 
@@ -24,33 +25,6 @@ function run(cmd) {
       else resolve(stdout);
     });
   });
-}
-
-async function downloadWithRetry(youtubeUrl, videoPath, maxRetries = 3) {
-  for (let i = 0; i < maxRetries; i++) {
-    try {
-      const ytDlpCmd = `yt-dlp \
-        --extractor-args "youtube:player_client=android_vr" \
-        -f "best[height<=480][ext=mp4]/best[height<=480]/best" \
-        --merge-output-format mp4 \
-        --no-playlist \
-        --no-check-certificates \
-        --retries 10 \
-        --fragment-retries 10 \
-        --no-abort-on-error \
-        --sleep-requests 2 \
-        --sleep-interval 2 \
-        -o "${videoPath}" "${youtubeUrl}"`;
-
-      await run(ytDlpCmd);
-      return;
-    } catch (error) {
-      if (i === maxRetries - 1) throw error;
-
-      console.log(`Download failed, retrying in ${(i + 1) * 3} seconds...`);
-      await new Promise(resolve => setTimeout(resolve, (i + 1) * 3000));
-    }
-  }
 }
 
 app.get('/', (req, res) => res.json({ status: 'Trueclip backend running ✅' }));
@@ -76,7 +50,16 @@ app.post('/generate', async (req, res) => {
 
     console.log('Downloading video...');
     const videoPath = `${tmpDir}/video.mp4`;
-    await downloadWithRetry(youtubeUrl, videoPath);
+    const cookiesPath = path.join(process.cwd(), 'cookies.txt');
+    const cookiesFlag = fs.existsSync(cookiesPath) ? `--cookies "${cookiesPath}"` : '';
+    await run(`yt-dlp ${cookiesFlag} \
+  --extractor-args "youtube:player_client=ios" \
+  --user-agent "com.google.ios.youtube/19.29.1 (iPhone16,2; U; CPU iOS 17_5_1 like Mac OS X;)" \
+  -f "bestvideo[height<=720][ext=mp4]+bestaudio[ext=m4a]/best[height<=720]/best" \
+  --merge-output-format mp4 \
+  --no-playlist \
+  --retries 3 \
+  -o "${videoPath}" "${youtubeUrl}"`);
 
     console.log('Extracting audio...');
     const audioPath = `${tmpDir}/audio.mp3`;
