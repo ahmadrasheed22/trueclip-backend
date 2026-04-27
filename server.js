@@ -47,7 +47,21 @@ function setupCookies() {
 
 // ─── Build yt-dlp command with all env-driven flags ──────────────────────────
 function buildYtDlpCommand(targetUrl, videoPath) {
-  const cookiesFile = process.env.YTDLP_COOKIES_FILE || '/tmp/youtube-cookies.txt';
+  let cookiesFile = process.env.YTDLP_COOKIES_FILE || '/tmp/youtube-cookies.txt';
+  const youtubeCookies = process.env.YOUTUBE_COOKIES;
+
+  if (youtubeCookies) {
+    const cookieFilePath = path.join(process.cwd(), 'cookies.txt');
+
+    try {
+      fs.writeFileSync(cookieFilePath, youtubeCookies, { encoding: 'utf8' });
+      cookiesFile = cookieFilePath;
+      console.log(`YOUTUBE_COOKIES loaded and written to ${cookieFilePath}`);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      console.warn(`Failed to write YOUTUBE_COOKIES to ${cookieFilePath}: ${message}`);
+    }
+  }
 
   let cmd = `yt-dlp`;
   cmd += ` -f "best[height<=720][ext=mp4]/best[height<=720]/best"`;
