@@ -47,21 +47,20 @@ function setupCookies() {
 
 // ─── Build yt-dlp command with all env-driven flags ──────────────────────────
 function buildYtDlpCommand(targetUrl, videoPath) {
-  const jsRuntime     = process.env.YTDLP_JS_RUNTIMES    || 'node';
-  const extractorArgs = process.env.YTDLP_EXTRACTOR_ARGS;
-  const cookiesFile   = process.env.YTDLP_COOKIES_FILE   || '/tmp/youtube-cookies.txt';
+  const cookiesFile = process.env.YTDLP_COOKIES_FILE || '/tmp/youtube-cookies.txt';
 
   let cmd = `yt-dlp`;
-  cmd += ` -f "best[ext=mp4]/best"`;
+  cmd += ` -f "best[height<=720][ext=mp4]/best[height<=720]/best"`;
   cmd += ` --merge-output-format mp4`;
   cmd += ` --no-playlist`;
-  cmd += ` --retries 5`;
-  cmd += ` --socket-timeout 30`;
-  cmd += ` --js-runtimes "${jsRuntime}"`;
-
-  if (extractorArgs) {
-    cmd += ` --extractor-args "${extractorArgs}"`;
-  }
+  cmd += ` --retries 10`;
+  cmd += ` --socket-timeout 60`;
+  cmd += ` --extractor-args "youtube:player_client=ios,web_creator,mweb"`;
+  cmd += ` --add-header "User-Agent:Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15"`;
+  cmd += ` --add-header "Accept-Language:en-US,en;q=0.9"`;
+  cmd += ` --sleep-requests 2`;
+  cmd += ` --min-sleep-interval 3`;
+  cmd += ` --max-sleep-interval 6`;
 
   if (fs.existsSync(cookiesFile)) {
     cmd += ` --cookies "${cookiesFile}"`;
