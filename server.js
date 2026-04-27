@@ -205,7 +205,11 @@ app.post('/generate', async (req, res) => {
 
       const friendlyMessage = mapYtDlpError(rawStderr);
       console.error('yt-dlp failed:', rawStderr);
-      return res.status(500).json({ error: `Failed to download video: ${friendlyMessage}` });
+      console.error('yt-dlp RAW ERROR:', rawStderr);
+      return res.status(500).json({ 
+        error: `Failed to download video: ${friendlyMessage}`,
+        debug: rawStderr.slice(-1500)
+      });
     }
 
     console.log('Extracting audio...');
