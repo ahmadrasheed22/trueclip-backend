@@ -66,6 +66,11 @@ function buildYtDlpCommand(targetUrl, videoPath) {
     cmd += ` --cookies "${cookiesFile}"`;
   }
 
+  const proxy = process.env.YTDLP_PROXY;
+  if (proxy) {
+    cmd += ` --proxy "${proxy}"`;
+  }
+
   cmd += ` -o "${videoPath}"`;
   cmd += ` "${targetUrl}"`;
 
