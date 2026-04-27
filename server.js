@@ -3,6 +3,7 @@ const cors = require('cors');
 const { exec } = require('child_process');
 const util = require('util');
 const fs = require('fs');
+const path = require('path');
 const { OpenAI } = require('openai');
 const { v4: uuidv4 } = require('uuid');
 const execPromise = util.promisify(exec);
@@ -14,6 +15,93 @@ app.use(express.urlencoded({ limit: '100mb', extended: true }));
 app.use('/clips', express.static('/tmp/clips'));
 
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+
+// ─── Decode and write cookies from env on startup ────────────────────────────
+function setupCookies() {
+  const b64 = process.env.YTDLP_COOKIES_B64;
+  const cookiePath = process.env.YTDLP_COOKIES_FILE || '/tmp/youtube-cookies.txt';
+
+  if (b64) {
+    try {
+      const decoded = Buffer.from(b64, 'base64').toString('utf8');
+      fs.writeFileSync(cookiePath, decoded, { encoding: 'utf8' });
+      console.log(`Cookies written to ${cookiePath} (from env)`);
+    } catch (e) {
+      console.warn('Failed to write cookies from YTDLP_COOKIES_B64:', e.message);
+    }
+  } else {
+    // Fallback: copy cookies.txt bundled in the repo
+    const repoCookies = path.join(__dirname, 'cookies.txt');
+    if (fs.existsSync(repoCookies)) {
+      try {
+        fs.copyFileSync(repoCookies, cookiePath);
+        console.log(`Cookies written to ${cookiePath} (from repo cookies.txt)`);
+      } catch (e) {
+        console.warn('Failed to copy repo cookies.txt:', e.message);
+      }
+    } else {
+      console.log('No cookies available — running without cookies.');
+    }
+  }
+}
+
+// ─── Build yt-dlp command with all env-driven flags ──────────────────────────
+function buildYtDlpCommand(targetUrl, videoPath) {
+  const jsRuntime     = process.env.YTDLP_JS_RUNTIMES    || 'node';
+  const extractorArgs = process.env.YTDLP_EXTRACTOR_ARGS;
+  const cookiesFile   = process.env.YTDLP_COOKIES_FILE   || '/tmp/youtube-cookies.txt';
+
+  let cmd = `yt-dlp`;
+  cmd += ` -f "best[ext=mp4]/best"`;
+  cmd += ` --merge-output-format mp4`;
+  cmd += ` --no-playlist`;
+  cmd += ` --retries 5`;
+  cmd += ` --socket-timeout 30`;
+  cmd += ` --js-runtimes "${jsRuntime}"`;
+
+  if (extractorArgs) {
+    cmd += ` --extractor-args "${extractorArgs}"`;
+  }
+
+  if (fs.existsSync(cookiesFile)) {
+    cmd += ` --cookies "${cookiesFile}"`;
+  }
+
+  cmd += ` -o "${videoPath}"`;
+  cmd += ` "${targetUrl}"`;
+
+  return cmd;
+}
+
+// ─── Map yt-dlp stderr to user-friendly messages ─────────────────────────────
+function mapYtDlpError(stderr) {
+  if (!stderr) return 'Unknown yt-dlp error.';
+  const s = stderr.toLowerCase();
+
+  if (s.includes('no supported javascript runtime could be found')) {
+    return 'yt-dlp needs a JavaScript runtime. Make sure YTDLP_JS_RUNTIMES=node is set and Node is available.';
+  }
+  if (s.includes('sign in to confirm') || s.includes('not a bot') || s.includes('cookie')) {
+    return 'YouTube is blocking this request. Export authenticated cookies and set YTDLP_COOKIES_B64 in Railway.';
+  }
+  if (s.includes('private video')) {
+    return 'This video is private and cannot be downloaded.';
+  }
+  if (s.includes('members only') || s.includes('membership')) {
+    return 'This video is for channel members only.';
+  }
+  if (s.includes('age') && s.includes('restrict')) {
+    return 'This video is age-restricted. Authenticated cookies may help.';
+  }
+  if (s.includes('video unavailable') || s.includes('has been removed')) {
+    return 'This video is unavailable or has been removed from YouTube.';
+  }
+  if (s.includes('geo') || s.includes('not available in your country')) {
+    return 'This video is geo-blocked in the server region.';
+  }
+
+  return stderr.slice(-500).trim();
+}
 
 async function updateYtDlp() {
   try {
@@ -33,15 +121,14 @@ function run(cmd) {
   });
 }
 
-app.get('/', (req, res) => res.json({ status: 'Trueclip backend running ✅' }));
+app.get('/', (req, res) => res.json({ status: 'Trueclip backend running' }));
 
 function downloadFile(url, destPath) {
   return new Promise((resolve, reject) => {
     const https = require('https');
     const http = require('http');
-    const fs = require('fs');
     const protocol = url.startsWith('https') ? https : http;
-    
+
     const file = fs.createWriteStream(destPath);
     const options = {
       headers: {
@@ -53,7 +140,7 @@ function downloadFile(url, destPath) {
 
     function doRequest(reqUrl) {
       protocol.get(reqUrl, options, (response) => {
-        if (response.statusCode === 301 || response.statusCode === 302 || response.statusCode === 303) {
+        if ([301, 302, 303].includes(response.statusCode)) {
           doRequest(response.headers.location);
           return;
         }
@@ -79,8 +166,7 @@ app.post('/generate', async (req, res) => {
     return res.status(400).json({ error: 'YouTube URL is required' });
   }
 
-  // Add delay to avoid rate limiting
-  const delay = Math.floor(Math.random() * 3000) + 1000; // 1-4 seconds random delay
+  const delay = Math.floor(Math.random() * 3000) + 1000;
   await new Promise(resolve => setTimeout(resolve, delay));
 
   const jobId = uuidv4();
@@ -91,40 +177,36 @@ app.post('/generate', async (req, res) => {
     fs.mkdirSync(tmpDir, { recursive: true });
     fs.mkdirSync(clipsDir, { recursive: true });
 
-    console.log('Getting video download URL via yt-dlp...');
     const videoId = youtubeUrl.match(/(?:v=|youtu\.be\/)([^&\n?#]+)/)?.[1];
-    if (!videoId) throw new Error('Invalid YouTube URL');
+    if (!videoId) throw new Error('Invalid YouTube URL — could not extract video ID.');
 
     const targetUrl = `https://www.youtube.com/watch?v=${videoId}`;
     const videoPath = `${tmpDir}/video.mp4`;
 
-    console.log(`Starting download with yt-dlp for: ${targetUrl}`);
+    console.log(`Downloading: ${targetUrl}`);
+    const command = buildYtDlpCommand(targetUrl, videoPath);
+    console.log('yt-dlp command:', command);
+
     try {
-      // --merge-output-format mp4 ensures we get an mp4 file even if yt-dlp picks separate streams
-      const command = `yt-dlp -f "best[ext=mp4]/best" --merge-output-format mp4 --no-playlist -o "${videoPath}" "${targetUrl}"`;
-
       const { stderr } = await execPromise(command);
-
-      // yt-dlp sometimes prints progress to stderr, so we log it but don't error on it unless exit code is bad
       if (stderr && !stderr.includes('100%')) {
         console.log('yt-dlp logs:', stderr);
       }
-
       console.log('Download complete.');
     } catch (error) {
-      const stderr =
+      const rawStderr =
         error && typeof error === 'object' && 'stderr' in error
           ? String(error.stderr)
-          : '';
-      const message = stderr || (error instanceof Error ? error.message : String(error));
+          : error instanceof Error ? error.message : String(error);
 
-      console.error('yt-dlp failed:', message);
-      throw new Error(`Failed to download video: ${message}`);
+      const friendlyMessage = mapYtDlpError(rawStderr);
+      console.error('yt-dlp failed:', rawStderr);
+      return res.status(500).json({ error: `Failed to download video: ${friendlyMessage}` });
     }
 
     console.log('Extracting audio...');
     const audioPath = `${tmpDir}/audio.mp3`;
-  await run(`ffmpeg -hide_banner -loglevel error -i "${videoPath}" -q:a 2 -map a "${audioPath}" -y`);
+    await run(`ffmpeg -hide_banner -loglevel error -i "${videoPath}" -q:a 2 -map a "${audioPath}" -y`);
 
     console.log('Transcribing...');
     const transcription = await openai.audio.transcriptions.create({
@@ -207,5 +289,6 @@ Rules:
 });
 
 const PORT = process.env.PORT || 8000;
+setupCookies();
 updateYtDlp();
 app.listen(PORT, () => console.log(`Trueclip backend running on port ${PORT}`));
