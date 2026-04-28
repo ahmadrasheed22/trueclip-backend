@@ -49,19 +49,20 @@ function buildYtDlpCommand(targetUrl, videoPath) {
   cmd += ` --retries 10`;
   cmd += ` --socket-timeout 60`;
   
-  // Use a combination of clients that are less likely to be blocked and don't strictly require cookies
-  const extractorArgs = process.env.YTDLP_EXTRACTOR_ARGS || "youtube:player_client=web,android";
+  // Force a combination of clients that are less likely to be blocked and don't strictly require cookies
+  // Ignore environment variable to ensure our fix is applied
+  const extractorArgs = "youtube:player_client=web,android";
   cmd += ` --extractor-args "${extractorArgs}"`;
   
   // Use a generic user agent
   cmd += ` --add-header "User-Agent:Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"`;
   cmd += ` --add-header "Accept-Language:en-US,en;q=0.9"`;
 
-  if (fs.existsSync(cookiesFile)) {
-    cmd += ` --cookies "${cookiesFile}"`;
-  }
-  
-  // Adding --no-js-runtimes will prevent deno/node Deno crypto JS runtime errors
+  // Explicitly ignore cookies because invalid cookies trigger an instant block
+  // if (fs.existsSync(cookiesFile)) {
+  //   cmd += ` --cookies "${cookiesFile}"`;
+  // }
+  cmd += ` --compat-options no-youtube-jsc`;
   cmd += ` --no-js-runtimes`;
 
   const proxy = process.env.YTDLP_PROXY;
