@@ -130,7 +130,7 @@ app.post('/generate', async (req, res) => {
 
     console.log('Extracting audio...');
     const audioPath = `${tmpDir}/audio.mp3`;
-    await run(`ffmpeg -hide_banner -loglevel error -i "${videoPath}" -q:a 2 -map a "${audioPath}" -y`);
+    await run(`ffmpeg -hide_banner -loglevel error -i "${videoPath}" -vn -c:a libmp3lame -b:a 64k -ac 1 "${audioPath}" -y`);
 
     console.log('Transcribing...');
     const transcription = await openai.audio.transcriptions.create({
