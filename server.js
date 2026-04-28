@@ -62,7 +62,6 @@ function buildYtDlpCommand(targetUrl, videoPath) {
   // if (fs.existsSync(cookiesFile)) {
   //   cmd += ` --cookies "${cookiesFile}"`;
   // }
-  cmd += ` --compat-options no-youtube-jsc`;
   cmd += ` --no-js-runtimes`;
 
   const proxy = process.env.YTDLP_PROXY;
