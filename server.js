@@ -16,16 +16,55 @@ app.use('/clips', express.static('/tmp/clips'));
 
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
+function setupCookies() {
+  const b64 = process.env.YTDLP_COOKIES_B64;
+  const cookiePath = '/tmp/youtube-cookies.txt';
+
+  if (b64) {
+    try {
+      const decoded = Buffer.from(b64, 'base64').toString('utf8');
+      fs.writeFileSync(cookiePath, decoded, { encoding: 'utf8' });
+      console.log('Cookies written from YTDLP_COOKIES_B64');
+    } catch (e) {
+      console.warn('Failed to write cookies:', e.message);
+    }
+  } else {
+    const repoCookies = path.join(__dirname, 'cookies.txt');
+    if (fs.existsSync(repoCookies)) {
+      fs.copyFileSync(repoCookies, cookiePath);
+      console.log('Cookies written from repo cookies.txt');
+    } else {
+      console.log('No cookies available.');
+    }
+  }
+}
+
 function buildYtDlpCommand(targetUrl, videoPath) {
+  const cookiesFile = '/tmp/youtube-cookies.txt';
+
   let cmd = `yt-dlp`;
   cmd += ` -f "best[height<=720][ext=mp4]/best[height<=720]/best"`;
   cmd += ` --merge-output-format mp4`;
   cmd += ` --no-playlist`;
-  cmd += ` --retries 5`;
-  cmd += ` --socket-timeout 30`;
-  cmd += ` --extractor-args "youtube:player_client=android"`;
+  cmd += ` --retries 10`;
+  cmd += ` --socket-timeout 60`;
+  const extractorArgs = process.env.YTDLP_EXTRACTOR_ARGS || "youtube:player_client=android,web";
+  cmd += ` --extractor-args "${extractorArgs}"`;
+  cmd += ` --add-header "User-Agent:Mozilla/5.0 (SMART-TV; Linux; Tizen 5.0) AppleWebKit/538.1"`;
+  cmd += ` --add-header "Accept-Language:en-US,en;q=0.9"`;
+
+  if (fs.existsSync(cookiesFile)) {
+    cmd += ` --cookies "${cookiesFile}"`;
+  }
+
+  const proxy = process.env.YTDLP_PROXY;
+  if (proxy) {
+    cmd += ` --proxy "${proxy}"`;
+  }
+
   cmd += ` -o "${videoPath}"`;
   cmd += ` "${targetUrl}"`;
+
   return cmd;
 }
 
@@ -165,5 +204,6 @@ Rules: each clip 25-60 seconds, return exactly 5 clips, only the JSON array.`
 });
 
 const PORT = process.env.PORT || 8000;
+setupCookies();
 run('yt-dlp --version').then(v => console.log('yt-dlp version:', v.trim())).catch(() => {});
 app.listen(PORT, () => console.log(`Trueclip backend running on port ${PORT}`));
