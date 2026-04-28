@@ -43,12 +43,13 @@ function buildYtDlpCommand(targetUrl, videoPath) {
   const cookiesFile = '/tmp/youtube-cookies.txt';
 
   let cmd = `yt-dlp`;
-  cmd += ` -f "best[height<=720][ext=mp4]/best[height<=720]/best"`;
+    cmd += ` -f "best[height<=480][ext=mp4]/best[height<=480]/bestvideo[height<=480]+bestaudio/best"`;
   cmd += ` --merge-output-format mp4`;
   cmd += ` --no-playlist`;
   cmd += ` --retries 10`;
   cmd += ` --socket-timeout 60`;
-  cmd += ` --extractor-args "youtube:player_client=web;youtubepot-bgutilscript:server_home=/root/bgutil-ytdlp-pot-provider"`;
+    cmd += ` --extractor-args "youtube:player_client=mweb"`;
+    cmd += ` --no-check-certificates`;
 
   if (fs.existsSync(cookiesFile)) {
     cmd += ` --cookies "${cookiesFile}"`;
