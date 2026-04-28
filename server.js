@@ -162,37 +162,56 @@ Rules: each clip 25-60 seconds, return exactly 5 clips, only the JSON array.`
       temperature: 0.7
     });
 
-    let moments;
+    let moments = [];
     try {
       const raw = gptResponse.choices[0].message.content.trim();
-      moments = JSON.parse(raw.replace(/```json|```/g, '').trim());
+      let parsed = JSON.parse(raw.replace(/```json|```/g, '').trim());
+      
+      if (Array.isArray(parsed)) {
+        moments = parsed;
+      } else if (parsed && Array.isArray(parsed.clips)) {
+        moments = parsed.clips;
+      } else if (parsed && typeof parsed === 'object') {
+        const firstValue = Object.values(parsed)[0];
+        if (Array.isArray(firstValue)) {
+          moments = firstValue;
+        }
+      }
     } catch {
       return res.status(500).json({ error: 'Failed to parse AI response' });
     }
 
     console.log('Cutting clips...');
-    const clips = [];
-
-    for (let i = 0; i < moments.length; i++) {
-      const moment = moments[i];
+    
+    const backendUrl = process.env.BACKEND_URL || `http://localhost:${process.env.PORT || 8000}`;
+    
+    const clipPromises = moments.map(async (moment) => {
       const clipId = uuidv4();
       const clipPath = `${clipsDir}/${clipId}.mp4`;
       const duration = moment.end - moment.start;
       const srtPath = `${tmpDir}/${clipId}.srt`;
-      fs.writeFileSync(srtPath, `1\n00:00:00,000 --> 00:00:${Math.floor(duration).toString().padStart(2,'0')},000\n${moment.subtitle}\n`);
+      
+      const safeSubtitle = (moment.subtitle || '').replace(/'/g, "\\'");
+      fs.writeFileSync(srtPath, `1\n00:00:00,000 --> 00:00:${Math.floor(duration).toString().padStart(2,'0')},000\n${safeSubtitle}\n`);
 
-      await run(`ffmpeg -hide_banner -loglevel error -ss ${moment.start} -i "${videoPath}" -t ${duration} -vf "scale=720:1280:force_original_aspect_ratio=increase,crop=720:1280,subtitles='${srtPath}':force_style='FontSize=14,PrimaryColour=&HFFFFFF,OutlineColour=&H000000,Bold=1'" -c:v libx264 -c:a aac -preset ultrafast -crf 28 -maxrate 1M -bufsize 2M "${clipPath}" -y`);
+      // Use absolute path safely for ffmpeg filter on Windows by escaping colons or using relative if needed.
+      // Easiest is to format the subtitle path for ffmpeg:
+      const escapedSrtPath = srtPath.replace(/\\/g, '/').replace(/:/g, '\\:');
 
-      clips.push({
+      await run(`ffmpeg -hide_banner -loglevel error -ss ${moment.start} -i "${videoPath}" -t ${duration} -vf "scale=720:1280:force_original_aspect_ratio=increase,crop=720:1280,subtitles='${escapedSrtPath}':force_style='FontSize=14,PrimaryColour=&HFFFFFF,OutlineColour=&H000000,Bold=1'" -c:v libx264 -c:a aac -preset ultrafast -crf 28 -maxrate 1M -bufsize 2M "${clipPath}" -y`);
+
+      return {
         id: clipId,
-        videoUrl: `${process.env.BACKEND_URL}/clips/${jobId}/${clipId}.mp4`,
+        videoUrl: `${backendUrl}/clips/${jobId}/${clipId}.mp4`,
         duration: Math.round(duration),
-        title: moment.title,
+        title: moment.title || 'Clip',
         subtitle: moment.subtitle,
         startTime: moment.start,
         endTime: moment.end
-      });
-    }
+      };
+    });
+
+    const clips = await Promise.all(clipPromises);
 
     console.log('Done!');
     res.json({ clips });
