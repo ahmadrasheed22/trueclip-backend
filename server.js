@@ -48,14 +48,21 @@ function buildYtDlpCommand(targetUrl, videoPath) {
   cmd += ` --no-playlist`;
   cmd += ` --retries 10`;
   cmd += ` --socket-timeout 60`;
-  const extractorArgs = process.env.YTDLP_EXTRACTOR_ARGS || "youtube:player_client=android,web";
+  
+  // Use a combination of clients that are less likely to be blocked and don't strictly require cookies
+  const extractorArgs = process.env.YTDLP_EXTRACTOR_ARGS || "youtube:player_client=web,android";
   cmd += ` --extractor-args "${extractorArgs}"`;
-  cmd += ` --add-header "User-Agent:Mozilla/5.0 (SMART-TV; Linux; Tizen 5.0) AppleWebKit/538.1"`;
+  
+  // Use a generic user agent
+  cmd += ` --add-header "User-Agent:Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"`;
   cmd += ` --add-header "Accept-Language:en-US,en;q=0.9"`;
 
   if (fs.existsSync(cookiesFile)) {
     cmd += ` --cookies "${cookiesFile}"`;
   }
+  
+  // Adding --no-js-runtimes will prevent deno/node Deno crypto JS runtime errors
+  cmd += ` --no-js-runtimes`;
 
   const proxy = process.env.YTDLP_PROXY;
   if (proxy) {
