@@ -206,7 +206,8 @@ Rules: each clip 25-60 seconds, return exactly 5 clips, only the JSON array.`
       // Easiest is to format the subtitle path for ffmpeg:
       const escapedSrtPath = srtPath.replace(/\\/g, '/').replace(/:/g, '\\\\:');
 
-      await run(`ffmpeg -hide_banner -loglevel error -ss ${moment.start} -i "${videoPath}" -t ${duration} -vf "scale=720:1280:force_original_aspect_ratio=increase,crop=720:1280,subtitles='${escapedSrtPath}':fontsdir=/tmp:force_style='FontSize=14,PrimaryColour=&H00FFFFFF,OutlineColour=&H00000000,Bold=1,MarginV=20'" -c:v libx264 -c:a aac -preset ultrafast -crf 28 -maxrate 1M -bufsize 2M "${clipPath}" -y`);
+      // Add -video_track_times_info to ensure it uses video stream if multiple streams exist
+      await run(`ffmpeg -hide_banner -loglevel error -ss ${moment.start} -i "${videoPath}" -t ${duration} -vf "scale=720:1280:force_original_aspect_ratio=increase,crop=720:1280,subtitles='${escapedSrtPath}':force_style='FontSize=14,PrimaryColour=&H00FFFFFF,OutlineColour=&H00000000,Bold=1,MarginV=20'" -c:v libx264 -c:a aac -b:a 128k -preset ultrafast -crf 28 -maxrate 1M -bufsize 2M -pix_fmt yuv420p "${clipPath}" -y`);
 
       return {
         id: clipId,
