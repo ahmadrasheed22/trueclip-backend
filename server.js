@@ -50,18 +50,20 @@ function buildYtDlpCommand(targetUrl, videoPath) {
   cmd += ` --socket-timeout 60`;
   
   // Force a combination of clients that are less likely to be blocked and don't strictly require cookies
-  // Ignore environment variable to ensure our fix is applied
-  const extractorArgs = "youtube:player_client=web,android";
+  // Use ios along with web and android because it often bypasses bot checks more aggressively without a po_token on some regions
+  const extractorArgs = "youtube:player_client=ios,web,android";
   cmd += ` --extractor-args "${extractorArgs}"`;
   
   // Use a generic user agent
-  cmd += ` --add-header "User-Agent:Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"`;
+  cmd += ` --add-header "User-Agent:Mozilla/5.0 (iPhone; CPU iPhone OS 16_6 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.6 Mobile/15E148 Safari/604.1"`;
   cmd += ` --add-header "Accept-Language:en-US,en;q=0.9"`;
 
-  // Explicitly ignore cookies because invalid cookies trigger an instant block
-  // if (fs.existsSync(cookiesFile)) {
-  //   cmd += ` --cookies "${cookiesFile}"`;
-  // }
+  // Proxy support if YouTube entirely blocks the IP space
+  const proxy = process.env.YTDLP_PROXY;
+  if (proxy) {
+    cmd += ` --proxy "${proxy}"`;
+  }
+
   cmd += ` --no-js-runtimes`;
 
   const proxy = process.env.YTDLP_PROXY;
