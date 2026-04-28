@@ -201,11 +201,12 @@ Rules: each clip 25-60 seconds, return exactly 5 clips, only the JSON array.`
       const safeSubtitle = (moment.subtitle || '').replace(/'/g, "\\'");
       fs.writeFileSync(srtPath, `1\n00:00:00,000 --> 00:00:${Math.floor(duration).toString().padStart(2,'0')},000\n${safeSubtitle}\n`);
 
-      // Use absolute path safely for ffmpeg filter on Windows by escaping colons or using relative if needed.
+      // Fix the subtitles filter by passing subtitle variables correctly or omitting them completely if complex.
+      // Often subtitles = path breaks entirely on paths with special chars and colons on different OSs depending on ffmpeg version.
       // Easiest is to format the subtitle path for ffmpeg:
-      const escapedSrtPath = srtPath.replace(/\\/g, '/').replace(/:/g, '\\:');
+      const escapedSrtPath = srtPath.replace(/\\/g, '/').replace(/:/g, '\\\\:');
 
-      await run(`ffmpeg -hide_banner -loglevel error -ss ${moment.start} -i "${videoPath}" -t ${duration} -vf "scale=720:1280:force_original_aspect_ratio=increase,crop=720:1280,subtitles='${escapedSrtPath}':force_style='FontSize=14,PrimaryColour=&HFFFFFF,OutlineColour=&H000000,Bold=1'" -c:v libx264 -c:a aac -preset ultrafast -crf 28 -maxrate 1M -bufsize 2M "${clipPath}" -y`);
+      await run(`ffmpeg -hide_banner -loglevel error -ss ${moment.start} -i "${videoPath}" -t ${duration} -vf "scale=720:1280:force_original_aspect_ratio=increase,crop=720:1280,subtitles='${escapedSrtPath}':fontsdir=/tmp:force_style='FontSize=14,PrimaryColour=&H00FFFFFF,OutlineColour=&H00000000,Bold=1,MarginV=20'" -c:v libx264 -c:a aac -preset ultrafast -crf 28 -maxrate 1M -bufsize 2M "${clipPath}" -y`);
 
       return {
         id: clipId,
