@@ -2,6 +2,8 @@ FROM node:20-slim
 
 RUN apt-get update && apt-get install -y \
     ffmpeg \
+    fonts-liberation \
+    fontconfig \
     python3 \
     python3-pip \
     curl \
