@@ -49,9 +49,12 @@ function buildYtDlpCommand(targetUrl, videoPath) {
   cmd += ` --retries 10`;
   cmd += ` --socket-timeout 60`;
   
-  // Use mobile/tv clients prioritizing API-based clients which have less aggressive cookie-rotation checks
-  const extractorArgs = "youtube:player_client=ios,android,tv";
+  // Bypass bot/captcha using heavily reduced web client and strict auth parameters rather than full aggressive scraping
+  const extractorArgs = "youtube:player_client=default";
   cmd += ` --extractor-args "${extractorArgs}"`;
+  cmd += ` --sleep-requests 1`;
+  cmd += ` --sleep-interval 2`;
+  cmd += ` --max-sleep-interval 5`;
   
   if (fs.existsSync(cookiesFile)) {
     cmd += ` --cookies "${cookiesFile}"`;
