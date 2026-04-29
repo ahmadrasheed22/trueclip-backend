@@ -49,9 +49,8 @@ function buildYtDlpCommand(targetUrl, videoPath) {
   cmd += ` --retries 10`;
   cmd += ` --socket-timeout 60`;
   
-  // Force a combination of clients that are less likely to be blocked and don't strictly require cookies
-  // Use ios along with web and android because it often bypasses bot checks more aggressively without a po_token on some regions
-  const extractorArgs = "youtube:player_client=ios,web,android";
+  // Use mobile/tv clients prioritizing API-based clients which have less aggressive cookie-rotation checks
+  const extractorArgs = "youtube:player_client=ios,android,tv";
   cmd += ` --extractor-args "${extractorArgs}"`;
   
   if (fs.existsSync(cookiesFile)) {
