@@ -187,11 +187,12 @@ Rules: each clip 25-60 seconds, return exactly 5 clips, only the JSON array.`
       return res.status(500).json({ error: 'Failed to parse AI response' });
     }
 
-    console.log('Cutting clips...');
+    console.log('Cutting clips sequentially...');
     
     const backendUrl = process.env.BACKEND_URL || `http://localhost:${process.env.PORT || 8000}`;
     
-    const clipPromises = moments.map(async (moment) => {
+    const clips = [];
+    for (const moment of moments) {
       const clipId = uuidv4();
       const clipPath = `${clipsDir}/${clipId}.mp4`;
       const duration = moment.end - moment.start;
@@ -200,28 +201,27 @@ Rules: each clip 25-60 seconds, return exactly 5 clips, only the JSON array.`
       const safeSubtitle = (moment.subtitle || '').replace(/'/g, "\\'");
       fs.writeFileSync(srtPath, `1\n00:00:00,000 --> 00:00:${Math.floor(duration).toString().padStart(2,'0')},000\n${safeSubtitle}\n`);
 
-      // Fix the subtitles filter by passing subtitle variables correctly or omitting them completely if complex.
-      // Often subtitles = path breaks entirely on paths with special chars and colons on different OSs depending on ffmpeg version.
-      // Easiest is to format the subtitle path for ffmpeg:
       const escapedSrtPath = srtPath.replace(/\\/g, '/').replace(/:/g, '\\\\:');
 
-      // Add -video_track_times_info to ensure it uses video stream if multiple streams exist
-      await run(`ffmpeg -hide_banner -loglevel error -ss ${moment.start} -i "${videoPath}" -t ${duration} -vf "scale=720:1280:force_original_aspect_ratio=increase,crop=720:1280,subtitles='${escapedSrtPath}':force_style='FontSize=14,PrimaryColour=&H00FFFFFF,OutlineColour=&H00000000,Bold=1,MarginV=20'" -c:v libx264 -c:a aac -b:a 128k -preset ultrafast -crf 28 -maxrate 1M -bufsize 2M -pix_fmt yuv420p "${clipPath}" -y`);
+      try {
+        console.log(`Generating clip: ${moment.title} (${duration.toFixed(1)}s)`);
+        await run(`ffmpeg -hide_banner -loglevel error -ss ${moment.start} -i "${videoPath}" -t ${duration} -vf "scale=720:1280:force_original_aspect_ratio=increase,crop=720:1280,subtitles='${escapedSrtPath}':force_style='FontSize=14,PrimaryColour=&H00FFFFFF,OutlineColour=&H00000000,Bold=1,MarginV=20',format=yuv420p" -c:v libx264 -c:a aac -b:a 128k -preset veryfast -crf 28 -maxrate 1.5M -bufsize 3M "${clipPath}" -y`);
+        
+        clips.push({
+          id: clipId,
+          videoUrl: `${backendUrl}/clips/${jobId}/${clipId}.mp4`,
+          duration: Math.round(duration),
+          title: moment.title || 'Clip',
+          subtitle: moment.subtitle,
+          startTime: moment.start,
+          endTime: moment.end
+        });
+      } catch (err) {
+        console.error(`Failed to generate clip ${clipId}:`, err.message || err);
+      }
+    }
 
-      return {
-        id: clipId,
-        videoUrl: `${backendUrl}/clips/${jobId}/${clipId}.mp4`,
-        duration: Math.round(duration),
-        title: moment.title || 'Clip',
-        subtitle: moment.subtitle,
-        startTime: moment.start,
-        endTime: moment.end
-      };
-    });
-
-    const clips = await Promise.all(clipPromises);
-
-    console.log('Done!');
+    console.log('Done generating all clips!');
     res.json({ clips });
 
   } catch (error) {
