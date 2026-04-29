@@ -58,12 +58,12 @@ function buildYtDlpCommand(targetUrl, videoPath) {
   cmd += ` --add-header "User-Agent:Mozilla/5.0 (iPhone; CPU iPhone OS 16_6 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.6 Mobile/15E148 Safari/604.1"`;
   cmd += ` --add-header "Accept-Language:en-US,en;q=0.9"`;
 
-  const fallbackProxy = process.env.YTDLP_PROXY;
-  if (fallbackProxy) {
-    cmd += ` --proxy "${fallbackProxy}"`;
+  if (fs.existsSync(cookiesFile)) {
+    cmd += ` --cookies "${cookiesFile}"`;
   }
 
-  cmd += ` --no-js-runtimes`;
+  const runtimes = process.env.YTDLP_JS_RUNTIMES || "node";
+  cmd += ` --js-runtimes "${runtimes}"`;
 
   const proxy = process.env.YTDLP_PROXY;
   if (proxy) {
