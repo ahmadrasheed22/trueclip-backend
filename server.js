@@ -144,10 +144,11 @@ app.post('/generate', async (req, res) => {
       file: fs.createReadStream(audioPath),
       model: 'whisper-1',
       response_format: 'verbose_json',
-      timestamp_granularities: ['segment']
+      timestamp_granularities: ['word', 'segment']
     });
 
-    const segments = transcription.segments;
+    const segments = transcription.segments || [];
+    const allWords = transcription.words || [];
     const fullText = segments.map(s => `[${s.start.toFixed(1)}s-${s.end.toFixed(1)}s]: ${s.text}`).join('\n');
 
     console.log('Finding best moments...');
@@ -197,16 +198,53 @@ Rules: each clip 25-60 seconds, return exactly 5 clips, only the JSON array.`
       const clipId = uuidv4();
       const clipPath = `${clipsDir}/${clipId}.mp4`;
       const duration = moment.end - moment.start;
-      const srtPath = `${tmpDir}/${clipId}.srt`;
       
-      const safeSubtitle = (moment.subtitle || '').replace(/'/g, "\\'");
-      fs.writeFileSync(srtPath, `1\n00:00:00,000 --> 00:00:${Math.floor(duration).toString().padStart(2,'0')},000\n${safeSubtitle}\n`);
+      const assPath = `${tmpDir}/${clipId}.ass`;
+      
+      let assContent = `[Script Info]
+ScriptType: v4.00+
+PlayResX: 720
+PlayResY: 1280
 
-      const escapedSrtPath = srtPath.replace(/\\/g, '/').replace(/:/g, '\\\\:');
+[V4+ Styles]
+Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
+Style: Main,Arial,60,&H0000FFFF,&H000000FF,&H00000000,&H80000000,-1,0,0,0,100,100,0,0,1,3,2,5,20,20,300,1
+
+[Events]
+Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
+`;
+
+      const formatAssTime = (seconds) => {
+        const secs = Math.max(0, seconds);
+        const h = Math.floor(secs / 3600);
+        const m = Math.floor((secs % 3600) / 60).toString().padStart(2, '0');
+        const s = Math.floor(secs % 60).toString().padStart(2, '0');
+        const cs = Math.floor((secs % 1) * 100).toString().padStart(2, '0');
+        return `${h}:${m}:${s}.${cs}`;
+      };
+
+      const clipWords = allWords.filter(w => w.start >= moment.start && w.end <= moment.end);
+      
+      if (clipWords.length > 0) {
+        for (let i = 0; i < clipWords.length; i += 2) {
+          const w1 = clipWords[i];
+          const w2 = clipWords[i+1];
+          const start = formatAssTime(w1.start - moment.start);
+          const end = formatAssTime((w2 ? w2.end : w1.end) - moment.start);
+          const text = (w1.word + (w2 ? w2.word : "")).trim().replace(/\s+/g, " ");
+          assContent += `Dialogue: 0,${start},${end},Main,,0,0,0,,{\\b1}${text}\n`;
+        }
+      } else {
+        const secEnd = Math.floor(duration).toString().padStart(2,'0');
+        assContent += `Dialogue: 0,0:00:00.00,0:00:${secEnd}.00,Main,,0,0,0,,{\\b1}${moment.subtitle || moment.title}\n`;
+      }
+
+      fs.writeFileSync(assPath, assContent);
+      const escapedAssPath = assPath.replace(/\\/g, '/').replace(/:/g, '\\\\:');
 
       try {
         console.log(`Generating clip: ${moment.title} (${duration.toFixed(1)}s)`);
-        await run(`ffmpeg -hide_banner -loglevel error -ss ${moment.start} -i "${videoPath}" -t ${duration} -vf "scale=720:1280:force_original_aspect_ratio=increase,crop=720:1280,subtitles='${escapedSrtPath}':force_style='FontSize=14,PrimaryColour=&H00FFFFFF,OutlineColour=&H00000000,Bold=1,MarginV=20',format=yuv420p" -c:v libx264 -c:a aac -b:a 128k -preset veryfast -crf 28 -maxrate 1.5M -bufsize 3M "${clipPath}" -y`);
+        await run(`ffmpeg -hide_banner -loglevel error -ss ${moment.start} -i "${videoPath}" -t ${duration} -vf "scale=720:1280:force_original_aspect_ratio=increase,crop=720:1280,subtitles='${escapedAssPath}',format=yuv420p" -c:v libx264 -c:a aac -b:a 128k -preset veryfast -crf 28 -maxrate 1.5M -bufsize 3M "${clipPath}" -y`);
         
         clips.push({
           id: clipId,
