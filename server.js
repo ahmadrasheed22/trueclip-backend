@@ -208,7 +208,7 @@ PlayResY: 1280
 
 [V4+ Styles]
 Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
-Style: Main,Arial,60,&H0000FFFF,&H000000FF,&H00000000,&H80000000,-1,0,0,0,100,100,0,0,1,3,2,5,20,20,300,1
+Style: Main,Impact,90,&H0000FFFF,&H00FFFFFF,&H00000000,&H80000000,-1,0,0,0,105,105,1,0,1,6,4,2,20,20,400,1
 
 [Events]
 Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
@@ -231,12 +231,12 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
           const w2 = clipWords[i+1];
           const start = formatAssTime(w1.start - moment.start);
           const end = formatAssTime((w2 ? w2.end : w1.end) - moment.start);
-          const text = (w1.word + (w2 ? w2.word : "")).trim().replace(/\s+/g, " ");
-          assContent += `Dialogue: 0,${start},${end},Main,,0,0,0,,{\\b1}${text}\n`;
+          const text = (w1.word + (w2 ? " " + w2.word : "")).trim().replace(/\s+/g, " ").toUpperCase();
+          assContent += `Dialogue: 0,${start},${end},Main,,0,0,0,,{\\b1}{\\fad(4,4)}${text}\n`;
         }
       } else {
         const secEnd = Math.floor(duration).toString().padStart(2,'0');
-        assContent += `Dialogue: 0,0:00:00.00,0:00:${secEnd}.00,Main,,0,0,0,,{\\b1}${moment.subtitle || moment.title}\n`;
+        assContent += `Dialogue: 0,0:00:00.00,0:00:${secEnd}.00,Main,,0,0,0,,{\\b1}{\\fad(4,4)}${(moment.subtitle || moment.title).toUpperCase()}\n`;
       }
 
       fs.writeFileSync(assPath, assContent);
