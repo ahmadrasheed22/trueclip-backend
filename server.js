@@ -6,6 +6,7 @@ const fs = require('fs');
 const path = require('path');
 const { OpenAI } = require('openai');
 const { v4: uuidv4 } = require('uuid');
+const { YoutubeTranscript } = require('youtube-transcript');
 const execPromise = util.promisify(exec);
 
 const app = express();
@@ -100,7 +101,7 @@ function run(cmd) {
 app.get('/', (req, res) => res.json({ status: 'Trueclip backend running' }));
 
 app.post('/generate', async (req, res) => {
-  const { youtubeUrl } = req.body;
+  const { youtubeUrl, subtitleStyle = 'karaoke', highlightColor = '#FFD700', fontSize = 70, position = 'bottom' } = req.body;
   if (!youtubeUrl) return res.status(400).json({ error: 'YouTube URL is required' });
 
   const delay = Math.floor(Math.random() * 2000) + 500;
@@ -139,33 +140,56 @@ app.post('/generate', async (req, res) => {
     const audioPath = `${tmpDir}/audio.mp3`;
     await run(`ffmpeg -hide_banner -loglevel error -i "${videoPath}" -vn -c:a libmp3lame -b:a 64k -ac 1 "${audioPath}" -y`);
 
-    console.log('Transcribing...');
-    const transcription = await openai.audio.transcriptions.create({
-      file: fs.createReadStream(audioPath),
-      model: 'whisper-1',
-      response_format: 'verbose_json',
-      timestamp_granularities: ['word', 'segment']
-    });
+    let segments = [];
+    let allWords = [];
+    let fullText = "";
 
-    const segments = transcription.segments || [];
-    const allWords = transcription.words || [];
-    const fullText = segments.map(s => `[${s.start.toFixed(1)}s-${s.end.toFixed(1)}s]: ${s.text}`).join('\n');
+    try {
+      console.log('Fetching YouTube transcript (Phase 1)...');
+      const ytTranscript = await YoutubeTranscript.fetchTranscript(videoId);
+      console.log('YouTube captions found. Converting to word-level format...');
+      ytTranscript.forEach((track) => {
+        const sStart = track.offset / 1000;
+        const sDur = track.duration / 1000;
+        segments.push({ start: sStart, end: sStart + sDur, text: track.text });
+
+        const wArr = track.text.split(' ');
+        const wDur = sDur / (wArr.length || 1);
+        wArr.forEach((w, wIndex) => {
+          allWords.push({ word: w, start: sStart + (wIndex * wDur), end: sStart + ((wIndex + 1) * wDur) });
+        });
+      });
+      fullText = segments.map(s => `[${s.start.toFixed(1)}s-${s.end.toFixed(1)}s]: ${s.text}`).join('\n');
+    } catch (ytErr) {
+      console.log('YouTube captions unavailable. Falling back to OpenAI Whisper...');
+      console.log('Transcribing...');
+      const transcription = await openai.audio.transcriptions.create({
+        file: fs.createReadStream(audioPath),
+        model: 'whisper-1',
+        response_format: 'verbose_json',
+        timestamp_granularities: ['word', 'segment']
+      });
+
+      segments = transcription.segments || [];
+      allWords = transcription.words || [];
+      fullText = segments.map(s => `[${s.start.toFixed(1)}s-${s.end.toFixed(1)}s]: ${s.text}`).join('\n');
+    }
 
     console.log('Finding best moments...');
     const gptResponse = await openai.chat.completions.create({
       model: 'gpt-4o-mini',
       messages: [{
         role: 'user',
-        content: `You are a viral video editor. Given this transcript with timestamps, find the 5 most engaging moments for TikTok/YouTube Shorts (30-60 seconds each).
+        content: `You are a viral content editor. Analyze this transcript and identify the 3 most engaging 30-60 second segments. For each, return: start_time, end_time, hook_description, suggested_title. Focus on: hooks, emotional peaks, surprising facts, controversial statements, humor.
 
 Transcript:
 ${fullText}
 
 Return ONLY a JSON array, no other text:
 [
-  { "start": 10.5, "end": 45.2, "title": "Title", "subtitle": "Description" }
+  { "start": 10.5, "end": 45.2, "title": "Suggested Title", "subtitle": "Hook description" }
 ]
-Rules: each clip 25-60 seconds, return exactly 5 clips, only the JSON array.`
+Rules: each clip 30-60 seconds, return exactly 3 clips, only the JSON array.`
       }],
       temperature: 0.7
     });
@@ -200,15 +224,41 @@ Rules: each clip 25-60 seconds, return exactly 5 clips, only the JSON array.`
       const duration = moment.end - moment.start;
       
       const assPath = `${tmpDir}/${clipId}.ass`;
+
+      function hexToAssColor(hex) {
+        if (!hex) return "&H00D7FF&"; // default matching #FFD700 roughly
+        const h = hex.replace('#', '');
+        if (h.length === 6) {
+          return `&H00${h.substring(4,6)}${h.substring(2,4)}${h.substring(0,2)}&`; // BGR format
+        }
+        return "&H00D7FF&";
+      }
+      
+      const aColor = hexToAssColor(highlightColor);
+      const fSize = parseInt(fontSize) || 70;
+      const margV = position === 'top' ? 200 : 400;
+
+      let styleDef = "";
+      if (subtitleStyle === 'clean') {
+        styleDef = `Style: Main,Arial Black,${fSize},&H00FFFFFF,&H00FFFFFF,&H00000000,&H00000000,-1,0,0,0,100,100,0,0,1,3,0,2,20,20,${margV},1`;
+      } else if (subtitleStyle === 'background') {
+        styleDef = `Style: Main,Arial Black,${fSize},&H00FFFFFF,&H00FFFFFF,&H00000000,&H80000000,-1,0,0,0,100,100,0,0,3,4,0,2,20,20,${margV},1`;
+      } else if (subtitleStyle === 'neon') {
+        styleDef = `Style: Main,Arial Black,${fSize},&HFFD900&,&H00FFFFFF,&H00FFFFFF,&H80D900&,-1,0,0,0,100,100,0,0,1,4,2,2,20,20,${margV},1`;
+      } else if (subtitleStyle === 'outline') {
+        styleDef = `Style: Main,Impact,${fSize},&H00FFFFFF,&H00FFFFFF,&H00000000,&H00000000,-1,0,0,0,100,100,0,0,1,7,0,2,20,20,${margV},1`;
+      } else {
+        styleDef = `Style: Main,Arial Black,${fSize},${aColor},&H00888888,&H00000000,&H80000000,-1,0,0,0,105,105,1,0,1,5,2,2,20,20,${margV},1`;
+      }
       
       let assContent = `[Script Info]
 ScriptType: v4.00+
-PlayResX: 720
-PlayResY: 1280
+PlayResX: 1080
+PlayResY: 1920
 
 [V4+ Styles]
 Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
-Style: Main,Impact,90,&H0000FFFF,&H00FFFFFF,&H00000000,&H80000000,-1,0,0,0,105,105,1,0,1,6,4,2,20,20,400,1
+${styleDef}
 
 [Events]
 Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
@@ -244,7 +294,7 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
 
       try {
         console.log(`Generating clip: ${moment.title} (${duration.toFixed(1)}s)`);
-        await run(`ffmpeg -hide_banner -loglevel error -ss ${moment.start} -i "${videoPath}" -t ${duration} -vf "scale=720:1280:force_original_aspect_ratio=increase,crop=720:1280,subtitles='${escapedAssPath}',format=yuv420p" -c:v libx264 -c:a aac -b:a 128k -preset veryfast -crf 28 -maxrate 1.5M -bufsize 3M "${clipPath}" -y`);
+        await run(`ffmpeg -hide_banner -loglevel error -ss ${moment.start} -i "${videoPath}" -t ${duration} -vf "crop=ih*9/16:ih:(iw-ih*9/16)/2:0,scale=1080:1920,ass='${escapedAssPath}'" -c:a aac -b:a 128k -c:v libx264 -preset fast -crf 23 -y "${clipPath}"`);
         
         clips.push({
           id: clipId,
