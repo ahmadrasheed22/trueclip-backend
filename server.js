@@ -52,6 +52,7 @@ function buildYtDlpCommand(targetUrl, videoPath) {
   // Bypass bot/captcha using heavily reduced web client and strict auth parameters rather than full aggressive scraping
   const extractorArgs = "youtube:player_client=default";
   cmd += ` --extractor-args "${extractorArgs}"`;
+  cmd += ` --geo-bypass`;
   cmd += ` --sleep-requests 1`;
   cmd += ` --sleep-interval 2`;
   cmd += ` --max-sleep-interval 5`;
