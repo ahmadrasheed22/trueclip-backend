@@ -44,16 +44,18 @@ function buildYtDlpCommand(targetUrl, videoPath) {
   const cookiesFile = '/tmp/youtube-cookies.txt';
 
   let cmd = `yt-dlp`;
-  cmd += ` -f "best[height<=720][ext=mp4]/best[height<=720]/best"`;
+  // Try multiple format options for better regional bypass
+  cmd += ` -f "bestvideo[height<=720]+bestaudio/best[height<=720]/best"`;
   cmd += ` --merge-output-format mp4`;
   cmd += ` --no-playlist`;
   cmd += ` --retries 10`;
   cmd += ` --socket-timeout 60`;
   
-  // Bypass bot/captcha using heavily reduced web client and strict auth parameters rather than full aggressive scraping
-  const extractorArgs = "youtube:player_client=default";
+  // Use multiple player clients for better bypass success
+  const extractorArgs = "youtube:player_client=web,default";
   cmd += ` --extractor-args "${extractorArgs}"`;
   cmd += ` --geo-bypass`;
+  cmd += ` --no-check-certificates`;
   cmd += ` --sleep-requests 1`;
   cmd += ` --sleep-interval 2`;
   cmd += ` --max-sleep-interval 5`;
@@ -91,7 +93,7 @@ function mapYtDlpError(stderr) {
 
 function run(cmd) {
   return new Promise((resolve, reject) => {
-    exec(cmd, { maxBuffer: 1024 * 1024 * 100 }, (err, stdout, stderr) => {
+    exec(cmd, { maxBuffer: 1024 * 1024 * 10 }, (err, stdout, stderr) => {
       if (err) reject(stderr || err.message);
       else resolve(stdout);
     });
@@ -294,7 +296,7 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
 
       try {
         console.log(`Generating clip: ${moment.title} (${duration.toFixed(1)}s)`);
-        await run(`ffmpeg -hide_banner -loglevel error -ss ${moment.start} -i "${videoPath}" -t ${duration} -vf "crop=ih*9/16:ih:(iw-ih*9/16)/2:0,scale=1080:1920,ass='${escapedAssPath}'" -c:a aac -b:a 128k -c:v libx264 -preset fast -crf 23 -y "${clipPath}"`);
+        await run(`ffmpeg -hide_banner -loglevel error -threads 2 -ss ${moment.start} -i "${videoPath}" -t ${duration} -vf "crop=ih*9/16:ih:(iw-ih*9/16)/2:0,scale=1080:1920,ass='${escapedAssPath}'" -c:a aac -b:a 128k -c:v libx264 -preset ultrafast -crf 28 -y "${clipPath}"`);
         
         clips.push({
           id: clipId,
