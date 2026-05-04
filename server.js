@@ -10,12 +10,14 @@ const { YoutubeTranscript } = require('youtube-transcript');
 const execPromise = util.promisify(exec);
 const VIDEO_ID_REGEX = /^[A-Za-z0-9_-]{11}$/;
 const YOUTUBE_CACHE_DIR = '/tmp/youtube-cache';
+const CLIPS_DIR = '/tmp/clips';
+const clipIndex = new Map();
 
 const app = express();
 app.use(cors());
 app.use(express.json({ limit: '100mb' }));
 app.use(express.urlencoded({ limit: '100mb', extended: true }));
-app.use('/clips', express.static('/tmp/clips'));
+app.use('/clips', express.static(CLIPS_DIR));
 
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
@@ -47,7 +49,7 @@ function buildYtDlpCommand(targetUrl, videoPath) {
 
   let cmd = `yt-dlp`;
   // Try multiple format options for better regional bypass
-  cmd += ` -f "bestvideo[height<=1080]+bestaudio/best[height<=1080]/best"`;
+  cmd += ` -f "bestvideo[height<=1080][ext=mp4]+bestaudio[ext=m4a]/bestvideo[height<=1080]+bestaudio/best[height<=1080]/best"`;
   cmd += ` --merge-output-format mp4`;
   cmd += ` --no-playlist`;
   cmd += ` --retries 10`;
@@ -88,6 +90,29 @@ function ensureDir(dirPath) {
   if (!fs.existsSync(dirPath)) {
     fs.mkdirSync(dirPath, { recursive: true });
   }
+}
+
+function registerClip(jobId, clipId, clipPath) {
+  if (!clipIndex.has(jobId)) {
+    clipIndex.set(jobId, new Map());
+  }
+
+  clipIndex.get(jobId).set(clipId, clipPath);
+}
+
+function resolveClipPath(jobId, clipId) {
+  const jobMap = clipIndex.get(jobId);
+  const mappedPath = jobMap ? jobMap.get(clipId) : null;
+  if (mappedPath && fs.existsSync(mappedPath)) {
+    return mappedPath;
+  }
+
+  const fallbackPath = path.join(CLIPS_DIR, jobId, `${clipId}.mp4`);
+  if (fs.existsSync(fallbackPath)) {
+    return fallbackPath;
+  }
+
+  return null;
 }
 
 function sanitizeFilename(rawTitle, fallback) {
@@ -166,14 +191,14 @@ app.get('/download/:jobId/:clipId', (req, res) => {
     return res.status(400).json({ error: 'Missing clip identifier.' });
   }
 
-  const clipFile = clipIdRaw.endsWith('.mp4') ? clipIdRaw : `${clipIdRaw}.mp4`;
-  const clipPath = path.join('/tmp/clips', jobId, clipFile);
+  const clipId = clipIdRaw.replace(/\.mp4$/i, '');
+  const clipPath = resolveClipPath(jobId, clipId);
 
-  if (!fs.existsSync(clipPath)) {
-    return res.status(404).json({ error: 'Clip not found.' });
+  if (!clipPath) {
+    return res.status(404).json({ error: 'Clip file was not found. Please regenerate the clip.' });
   }
 
-  const safeName = `trueclip-${clipIdRaw.replace(/\.mp4$/i, '')}.mp4`;
+  const safeName = `trueclip-${clipId}.mp4`;
 
   res.setHeader('Content-Type', 'video/mp4');
   res.setHeader('Content-Disposition', `attachment; filename="${safeName}"`);
@@ -195,7 +220,7 @@ app.post('/generate', async (req, res) => {
 
   const jobId = uuidv4();
   const tmpDir = `/tmp/${jobId}`;
-  const clipsDir = `/tmp/clips/${jobId}`;
+  const clipsDir = path.join(CLIPS_DIR, jobId);
 
   try {
     fs.mkdirSync(tmpDir, { recursive: true });
@@ -382,6 +407,8 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
         console.log(`Generating clip: ${moment.title} (${duration.toFixed(1)}s)`);
         await run(`ffmpeg -hide_banner -loglevel error -threads 2 -ss ${moment.start} -i "${videoPath}" -t ${duration} -vf "crop=ih*9/16:ih:(iw-ih*9/16)/2:0,scale=1080:1920,ass='${escapedAssPath}'" -c:a aac -b:a 128k -c:v libx264 -preset veryfast -crf 23 -y "${clipPath}"`);
         
+        registerClip(jobId, clipId, clipPath);
+
         clips.push({
           id: clipId,
           videoUrl: `${backendUrl}/clips/${jobId}/${clipId}.mp4`,
