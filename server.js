@@ -8,6 +8,8 @@ const { OpenAI } = require('openai');
 const { v4: uuidv4 } = require('uuid');
 const { YoutubeTranscript } = require('youtube-transcript');
 const execPromise = util.promisify(exec);
+const VIDEO_ID_REGEX = /^[A-Za-z0-9_-]{11}$/;
+const YOUTUBE_CACHE_DIR = '/tmp/youtube-cache';
 
 const app = express();
 app.use(cors());
@@ -45,7 +47,7 @@ function buildYtDlpCommand(targetUrl, videoPath) {
 
   let cmd = `yt-dlp`;
   // Try multiple format options for better regional bypass
-  cmd += ` -f "bestvideo[height<=720]+bestaudio/best[height<=720]/best"`;
+  cmd += ` -f "bestvideo[height<=1080]+bestaudio/best[height<=1080]/best"`;
   cmd += ` --merge-output-format mp4`;
   cmd += ` --no-playlist`;
   cmd += ` --retries 10`;
@@ -78,6 +80,25 @@ function buildYtDlpCommand(targetUrl, videoPath) {
   return cmd;
 }
 
+function isValidVideoId(videoId) {
+  return typeof videoId === 'string' && VIDEO_ID_REGEX.test(videoId);
+}
+
+function ensureDir(dirPath) {
+  if (!fs.existsSync(dirPath)) {
+    fs.mkdirSync(dirPath, { recursive: true });
+  }
+}
+
+function sanitizeFilename(rawTitle, fallback) {
+  const cleaned = String(rawTitle || '')
+    .replace(/[^\w\s-]/g, '')
+    .trim()
+    .substring(0, 80);
+
+  return cleaned || fallback;
+}
+
 function mapYtDlpError(stderr) {
   if (!stderr) return 'Unknown yt-dlp error.';
   const s = stderr.toLowerCase();
@@ -101,6 +122,69 @@ function run(cmd) {
 }
 
 app.get('/', (req, res) => res.json({ status: 'Trueclip backend running' }));
+
+app.get('/download/youtube/:videoId', async (req, res) => {
+  const videoId = req.params.videoId;
+  const title = req.query.title || '';
+
+  if (!isValidVideoId(videoId)) {
+    return res.status(400).json({ error: 'Invalid video ID.' });
+  }
+
+  ensureDir(YOUTUBE_CACHE_DIR);
+  const cachePath = path.join(YOUTUBE_CACHE_DIR, `${videoId}.mp4`);
+
+  try {
+    if (!fs.existsSync(cachePath)) {
+      const targetUrl = `https://www.youtube.com/watch?v=${videoId}`;
+      const command = buildYtDlpCommand(targetUrl, cachePath);
+      await execPromise(command);
+    }
+
+    const fileName = `${sanitizeFilename(title, videoId)}.mp4`;
+
+    res.setHeader('Content-Type', 'video/mp4');
+    res.setHeader('Content-Disposition', `attachment; filename="${fileName}"`);
+
+    const stream = fs.createReadStream(cachePath);
+    stream.on('error', () => {
+      res.status(500).end();
+    });
+
+    stream.pipe(res);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'Download failed.';
+    res.status(500).json({ error: message });
+  }
+});
+
+app.get('/download/:jobId/:clipId', (req, res) => {
+  const jobId = path.basename(req.params.jobId || '');
+  const clipIdRaw = path.basename(req.params.clipId || '');
+
+  if (!jobId || !clipIdRaw) {
+    return res.status(400).json({ error: 'Missing clip identifier.' });
+  }
+
+  const clipFile = clipIdRaw.endsWith('.mp4') ? clipIdRaw : `${clipIdRaw}.mp4`;
+  const clipPath = path.join('/tmp/clips', jobId, clipFile);
+
+  if (!fs.existsSync(clipPath)) {
+    return res.status(404).json({ error: 'Clip not found.' });
+  }
+
+  const safeName = `trueclip-${clipIdRaw.replace(/\.mp4$/i, '')}.mp4`;
+
+  res.setHeader('Content-Type', 'video/mp4');
+  res.setHeader('Content-Disposition', `attachment; filename="${safeName}"`);
+
+  const stream = fs.createReadStream(clipPath);
+  stream.on('error', () => {
+    res.status(500).end();
+  });
+
+  stream.pipe(res);
+});
 
 app.post('/generate', async (req, res) => {
   const { youtubeUrl, subtitleStyle = 'karaoke', highlightColor = '#FFD700', fontSize = 70, position = 'bottom' } = req.body;
@@ -296,11 +380,12 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
 
       try {
         console.log(`Generating clip: ${moment.title} (${duration.toFixed(1)}s)`);
-        await run(`ffmpeg -hide_banner -loglevel error -threads 2 -ss ${moment.start} -i "${videoPath}" -t ${duration} -vf "crop=ih*9/16:ih:(iw-ih*9/16)/2:0,scale=1080:1920,ass='${escapedAssPath}'" -c:a aac -b:a 128k -c:v libx264 -preset ultrafast -crf 28 -y "${clipPath}"`);
+        await run(`ffmpeg -hide_banner -loglevel error -threads 2 -ss ${moment.start} -i "${videoPath}" -t ${duration} -vf "crop=ih*9/16:ih:(iw-ih*9/16)/2:0,scale=1080:1920,ass='${escapedAssPath}'" -c:a aac -b:a 128k -c:v libx264 -preset veryfast -crf 23 -y "${clipPath}"`);
         
         clips.push({
           id: clipId,
           videoUrl: `${backendUrl}/clips/${jobId}/${clipId}.mp4`,
+          downloadUrl: `${backendUrl}/download/${jobId}/${clipId}.mp4`,
           duration: Math.round(duration),
           title: moment.title || 'Clip',
           subtitle: moment.subtitle,
