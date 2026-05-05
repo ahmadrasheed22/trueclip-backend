@@ -44,12 +44,16 @@ function setupCookies() {
   }
 }
 
-function buildYtDlpCommand(targetUrl, videoPath) {
+function buildYtDlpCommand(targetUrl, videoPath, format = null) {
   const cookiesFile = '/tmp/youtube-cookies.txt';
 
   let cmd = `yt-dlp`;
-  // Try multiple format options for better regional bypass
-  cmd += ` -f "bestvideo[height<=1080][ext=mp4]+bestaudio[ext=m4a]/bestvideo[height<=1080]+bestaudio/best[height<=1080]/best"`;
+  if (format) {
+    cmd += ` -f "${format}"`;
+  } else {
+    // Try multiple format options for better regional bypass
+    cmd += ` -f "bestvideo[height<=1080][ext=mp4]+bestaudio[ext=m4a]/bestvideo[height<=1080]+bestaudio/best[height<=1080]/best"`;
+  }
   cmd += ` --merge-output-format mp4`;
   cmd += ` --no-playlist`;
   cmd += ` --retries 10`;
@@ -233,23 +237,18 @@ app.post('/generate', async (req, res) => {
     const videoPath = `${tmpDir}/video.mp4`;
 
     console.log(`Downloading: ${targetUrl}`);
-    const command = buildYtDlpCommand(targetUrl, videoPath);
+    const command = buildYtDlpCommand(targetUrl, videoPath, "worst[ext=mp4]/worst");
     console.log('Command:', command);
 
-    try {
-      await execPromise(command);
+    const ytDlpPromise = execPromise(command).then(() => {
       console.log('Download complete.');
-    } catch (error) {
+    }).catch(error => {
       const raw = error && typeof error === 'object' && 'stderr' in error
         ? String(error.stderr)
         : error instanceof Error ? error.message : String(error);
       console.error('yt-dlp error:', raw);
-      return res.status(500).json({ error: mapYtDlpError(raw), debug: raw.slice(-1500) });
-    }
-
-    console.log('Extracting audio...');
-    const audioPath = `${tmpDir}/audio.mp3`;
-    await run(`ffmpeg -hide_banner -loglevel error -i "${videoPath}" -vn -c:a libmp3lame -b:a 64k -ac 1 "${audioPath}" -y`);
+      throw new Error(mapYtDlpError(raw));
+    });
 
     let segments = [];
     let allWords = [];
@@ -272,7 +271,11 @@ app.post('/generate', async (req, res) => {
       });
       fullText = segments.map(s => `[${s.start.toFixed(1)}s-${s.end.toFixed(1)}s]: ${s.text}`).join('\n');
     } catch (ytErr) {
-      console.log('YouTube captions unavailable. Falling back to OpenAI Whisper...');
+      console.log('YouTube captions unavailable. Waiting for video download to fallback to OpenAI Whisper...');
+      await ytDlpPromise; // Need the video to extract audio
+      console.log('Extracting audio for Whisper...');
+      const audioPath = `${tmpDir}/audio.mp3`;
+      await run(`ffmpeg -hide_banner -loglevel error -i "${videoPath}" -vn -c:a libmp3lame -b:a 64k -ac 1 "${audioPath}" -y`);
       console.log('Transcribing...');
       const transcription = await openai.audio.transcriptions.create({
         file: fs.createReadStream(audioPath),
@@ -285,6 +288,9 @@ app.post('/generate', async (req, res) => {
       allWords = transcription.words || [];
       fullText = segments.map(s => `[${s.start.toFixed(1)}s-${s.end.toFixed(1)}s]: ${s.text}`).join('\n');
     }
+
+    // Ensure download finishes before attempting to cut clips, even if we had YouTube captions.
+    await ytDlpPromise;
 
     console.log('Finding best moments...');
     const gptResponse = await openai.chat.completions.create({
@@ -300,7 +306,7 @@ Return ONLY a JSON array, no other text:
 [
   { "start": 10.5, "end": 45.2, "title": "Suggested Title", "subtitle": "Hook description" }
 ]
-Rules: each clip 30-60 seconds, return exactly 3 clips, only the JSON array.`
+Rules: each clip 30-60 seconds, return exactly 3 clips, only the JSON array. Even if the video is unengaging or boring, you MUST return at least 3 clips. Do not apply a strict threshold, just pick the best available parts.`
       }],
       temperature: 0.7
     });
@@ -321,15 +327,40 @@ Rules: each clip 30-60 seconds, return exactly 3 clips, only the JSON array.`
         }
       }
     } catch {
-      return res.status(500).json({ error: 'Failed to parse AI response' });
+      console.log('Failed to parse AI response, falling back to equal segments...');
     }
 
-    console.log('Cutting clips sequentially...');
+    if (!moments || moments.length === 0) {
+      console.log('No strong moments found, falling back to equal segments...');
+      const videoDuration = segments[segments.length - 1]?.end || 60;
+      moments = [];
+      const clipLength = 45;
+      for (let i = 0; i < videoDuration; i += clipLength) {
+        if (i + 15 > videoDuration) break; // skip trailing small clip
+        moments.push({
+          start: i,
+          end: Math.min(i + clipLength, videoDuration),
+          title: `Segment ${Math.floor(i / clipLength) + 1}`,
+          subtitle: "Segment"
+        });
+        if (moments.length === 3) break;
+      }
+      if (moments.length === 0) {
+         moments.push({
+            start: 0,
+            end: Math.min(30, videoDuration),
+            title: "First Segment",
+            subtitle: "Segment"
+         });
+      }
+    }
+
+    console.log('Cutting clips in parallel...');
     
     const backendUrl = process.env.BACKEND_URL || `http://localhost:${process.env.PORT || 8000}`;
     
-    const clips = [];
-    for (const moment of moments) {
+    // Instead of sequentially, we run ffmpeg in parallel:
+    const clipPromises = moments.map(async (moment) => {
       const clipId = uuidv4();
       const clipPath = `${clipsDir}/${clipId}.mp4`;
       const duration = moment.end - moment.start;
@@ -409,7 +440,7 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
         
         registerClip(jobId, clipId, clipPath);
 
-        clips.push({
+        return {
           id: clipId,
           videoUrl: `${backendUrl}/clips/${jobId}/${clipId}.mp4`,
           downloadUrl: `${backendUrl}/download/${jobId}/${clipId}.mp4`,
@@ -418,11 +449,15 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
           subtitle: moment.subtitle,
           startTime: moment.start,
           endTime: moment.end
-        });
+        };
       } catch (err) {
         console.error(`Failed to generate clip ${clipId}:`, err.message || err);
+        return null;
       }
-    }
+    });
+
+    const clipResults = await Promise.all(clipPromises);
+    const clips = clipResults.filter(c => c !== null);
 
     console.log('Done generating all clips!');
     res.json({ clips });
