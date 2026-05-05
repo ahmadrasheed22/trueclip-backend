@@ -44,7 +44,7 @@ function setupCookies() {
   }
 }
 
-function buildYtDlpCommand(targetUrl, videoPath, format = null) {
+function buildYtDlpCommand(targetUrl, videoPath, format = null, limitDuration = false) {
   const cookiesFile = '/tmp/youtube-cookies.txt';
 
   let cmd = `yt-dlp`;
@@ -54,6 +54,12 @@ function buildYtDlpCommand(targetUrl, videoPath, format = null) {
     // Try multiple format options for better regional bypass
     cmd += ` -f "bestvideo[height<=1080][ext=mp4]+bestaudio[ext=m4a]/bestvideo[height<=1080]+bestaudio/best[height<=1080]/best"`;
   }
+  
+  if (limitDuration) {
+    // Only download the first 10 minutes (*0-600 seconds) for long videos
+    cmd += ` --download-sections "*0-600"`;
+  }
+
   cmd += ` --merge-output-format mp4`;
   cmd += ` --no-playlist`;
   cmd += ` --retries 10`;
@@ -237,7 +243,7 @@ app.post('/generate', async (req, res) => {
     const videoPath = `${tmpDir}/video.mp4`;
 
     console.log(`Downloading: ${targetUrl}`);
-    const command = buildYtDlpCommand(targetUrl, videoPath, "worst[ext=mp4]/worst");
+    const command = buildYtDlpCommand(targetUrl, videoPath, "worst[ext=mp4]/worst", true); // Pass true to limit duration
     console.log('Command:', command);
 
     const ytDlpPromise = execPromise(command).then(() => {
@@ -269,6 +275,7 @@ app.post('/generate', async (req, res) => {
           allWords.push({ word: w, start: sStart + (wIndex * wDur), end: sStart + ((wIndex + 1) * wDur) });
         });
       });
+      segments = segments.filter(s => s.start <= 600); // Exclude segments past 10 minutes to sync with yt-dlp limit
       fullText = segments.map(s => `[${s.start.toFixed(1)}s-${s.end.toFixed(1)}s]: ${s.text}`).join('\n');
     } catch (ytErr) {
       console.log('YouTube captions unavailable. Waiting for video download to fallback to OpenAI Whisper...');
