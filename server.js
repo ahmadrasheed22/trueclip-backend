@@ -395,6 +395,8 @@ Rules: each clip MUST be between 30 and 45 seconds maximum. Return exactly 3 cli
       const fSize = parseInt(fontSize) || 70;
       const margV = position === 'top' ? 200 : 400;
 
+      console.log('TRANSCRIPT SAMPLE:', JSON.stringify(allWords.slice(0, 5)));
+
       let styleDef = "";
       if (subtitleStyle === 'clean') {
         styleDef = `Style: Main,Arial Black,${fSize},&H00FFFFFF,&H00FFFFFF,&H00000000,&H00000000,-1,0,0,0,100,100,0,0,1,3,0,2,20,20,${margV},1`;
@@ -455,6 +457,8 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
         const secEnd = Math.floor(duration).toString().padStart(2,'0');
         assContent += `Dialogue: 0,0:00:00.00,0:00:${secEnd}.00,Main,,0,0,0,,{\\b1}{\\c${aColor}}${(moment.subtitle || moment.title).toUpperCase()}\n`;
       }
+
+      console.log('ASS SAMPLE:', assContent.substring(0, 500));
 
       fs.writeFileSync(assPath, assContent, { encoding: 'utf8' });
       const escapedAssPath = assPath.replace(/\\/g, '/').replace(/:/g, '\\\\:');
