@@ -262,7 +262,36 @@ app.post('/generate', async (req, res) => {
 
     try {
       console.log('Fetching YouTube transcript (Phase 1)...');
-      const ytTranscript = await YoutubeTranscript.fetchTranscript(videoId);
+      let ytTranscript;
+      try {
+        ytTranscript = await YoutubeTranscript.fetchTranscript(videoId, { lang: 'en' });
+      } catch {
+        try {
+          ytTranscript = await YoutubeTranscript.fetchTranscript(videoId, { lang: 'a.en' });
+        } catch {
+          ytTranscript = await YoutubeTranscript.fetchTranscript(videoId);
+          const joinedText = ytTranscript.map(t => t.text).join(' ');
+          if (/[^\x00-\x7F]/.test(joinedText)) {
+            console.log('Foreign language detected, translating transcript with OpenAI...');
+            const transResponse = await openai.chat.completions.create({
+              model: 'gpt-4o-mini',
+              messages: [{
+                role: 'system',
+                content: 'Translate the "text" fields in this JSON array to English. Do not change offset or duration. Output ONLY the strict JSON array without markdown.'
+              }, {
+                role: 'user',
+                content: JSON.stringify(ytTranscript.map(t => ({ offset: t.offset, duration: t.duration, text: t.text })))
+              }],
+              temperature: 0.3
+            });
+            const transRaw = transResponse.choices[0].message.content.trim();
+            const translatedArr = JSON.parse(transRaw.replace(/```json|```/g, '').trim());
+            // Ensure we keep the exact track format
+            ytTranscript = translatedArr.map(t => ({ offset: t.offset, duration: t.duration, text: t.text }));
+          }
+        }
+      }
+      
       console.log('YouTube captions found. Converting to word-level format...');
       ytTranscript.forEach((track) => {
         const sStart = track.offset / 1000;
@@ -287,6 +316,7 @@ app.post('/generate', async (req, res) => {
       const transcription = await openai.audio.transcriptions.create({
         file: fs.createReadStream(audioPath),
         model: 'whisper-1',
+        language: 'en',
         response_format: 'verbose_json',
         timestamp_granularities: ['word', 'segment']
       });
@@ -441,14 +471,18 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
           const start = formatAssTime(w1.start - moment.start);
           const end = formatAssTime((w2 ? w2.end : w1.end) - moment.start);
           
-          // Ensure we extract the actual word text, handling any API differences
-          const t1 = String(w1.word || w1.text || w1[0] || "").replace(/<[^>]*>/g, "").trim();
-          const t2 = w2 ? String(w2.word || w2.text || w2[0] || "").replace(/<[^>]*>/g, "").trim() : "";
+          const safeWord1 = String(w1.word || w1.text || w1[0] || '').replace(/<[^>]*>/g, '').trim();
+          if (!safeWord1 || !isNaN(Number(safeWord1))) continue;
+
+          let safeWord2 = '';
+          if (w2) {
+             const t2 = String(w2.word || w2.text || w2[0] || '').replace(/<[^>]*>/g, '').trim();
+             if (t2 && isNaN(Number(t2))) safeWord2 = t2;
+          }
           
-          // Apply Karaoke highlight color exactly inline
-          let coloredText = `{\\c${aColor}}${t1}`;
-          if (t2) {
-             coloredText += ` {\\c&H00FFFFFF&}${t2}`;
+          let coloredText = `{\\c${aColor}}${safeWord1}`;
+          if (safeWord2) {
+             coloredText += ` {\\c&H00FFFFFF&}${safeWord2}`;
           }
           
           assContent += `Dialogue: 0,${start},${end},Main,,0,0,0,,{\\b1}${coloredText.toUpperCase()}\n`;
