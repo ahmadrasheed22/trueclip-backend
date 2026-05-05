@@ -408,7 +408,7 @@ Rules: each clip MUST be between 30 and 45 seconds maximum. Return exactly 3 cli
         styleDef = `Style: Main,Arial Black,${fSize},${aColor},&H00888888,&H00000000,&H80000000,-1,0,0,0,105,105,1,0,1,5,2,2,20,20,${margV},1`;
       }
       
-      let assContent = `[Script Info]
+      let assContent = `\ufeff[Script Info]
 ScriptType: v4.00+
 PlayResX: 1080
 PlayResY: 1920
@@ -438,15 +438,25 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
           const w2 = clipWords[i+1];
           const start = formatAssTime(w1.start - moment.start);
           const end = formatAssTime((w2 ? w2.end : w1.end) - moment.start);
-          const text = (w1.word + (w2 ? " " + w2.word : "")).trim().replace(/\s+/g, " ").toUpperCase();
-          assContent += `Dialogue: 0,${start},${end},Main,,0,0,0,,{\\b1}{\\fad(4,4)}${text}\n`;
+          
+          // Ensure we extract the actual word text, handling any API differences
+          const t1 = String(w1.word || w1.text || w1[0] || "").replace(/<[^>]*>/g, "").trim();
+          const t2 = w2 ? String(w2.word || w2.text || w2[0] || "").replace(/<[^>]*>/g, "").trim() : "";
+          
+          // Apply Karaoke highlight color exactly inline
+          let coloredText = `{\\c${aColor}}${t1}`;
+          if (t2) {
+             coloredText += ` {\\c&H00FFFFFF&}${t2}`;
+          }
+          
+          assContent += `Dialogue: 0,${start},${end},Main,,0,0,0,,{\\b1}${coloredText.toUpperCase()}\n`;
         }
       } else {
         const secEnd = Math.floor(duration).toString().padStart(2,'0');
-        assContent += `Dialogue: 0,0:00:00.00,0:00:${secEnd}.00,Main,,0,0,0,,{\\b1}{\\fad(4,4)}${(moment.subtitle || moment.title).toUpperCase()}\n`;
+        assContent += `Dialogue: 0,0:00:00.00,0:00:${secEnd}.00,Main,,0,0,0,,{\\b1}{\\c${aColor}}${(moment.subtitle || moment.title).toUpperCase()}\n`;
       }
 
-      fs.writeFileSync(assPath, assContent);
+      fs.writeFileSync(assPath, assContent, { encoding: 'utf8' });
       const escapedAssPath = assPath.replace(/\\/g, '/').replace(/:/g, '\\\\:');
 
       try {
