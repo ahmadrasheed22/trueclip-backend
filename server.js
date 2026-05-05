@@ -298,13 +298,15 @@ app.post('/generate', async (req, res) => {
 
     // Ensure download finishes before attempting to cut clips, even if we had YouTube captions.
     await ytDlpPromise;
+    console.log('Cleaning up audio path...');
+    try { if (fs.existsSync(`${tmpDir}/audio.mp3`)) fs.unlinkSync(`${tmpDir}/audio.mp3`); } catch(e) {}
 
     console.log('Finding best moments...');
     const gptResponse = await openai.chat.completions.create({
       model: 'gpt-4o-mini',
       messages: [{
         role: 'user',
-        content: `You are a viral content editor. Analyze this transcript and identify the 3 most engaging 30-60 second segments. For each, return: start_time, end_time, hook_description, suggested_title. Focus on: hooks, emotional peaks, surprising facts, controversial statements, humor.
+        content: `You are a viral content editor. Analyze this transcript and identify the 3 most engaging clips. For each, return: start_time, end_time, hook_description, suggested_title. Focus on: hooks, emotional peaks, surprising facts, controversial statements, humor.
 
 Transcript:
 ${fullText}
@@ -313,7 +315,7 @@ Return ONLY a JSON array, no other text:
 [
   { "start": 10.5, "end": 45.2, "title": "Suggested Title", "subtitle": "Hook description" }
 ]
-Rules: each clip 30-60 seconds, return exactly 3 clips, only the JSON array. Even if the video is unengaging or boring, you MUST return at least 3 clips. Do not apply a strict threshold, just pick the best available parts.`
+Rules: each clip MUST be between 30 and 45 seconds maximum. Return exactly 3 clips, only the JSON array. Even if the video is unengaging or boring, you MUST return at least 3 clips. Do not apply a strict threshold, just pick the best available parts.`
       }],
       temperature: 0.7
     });
@@ -362,15 +364,21 @@ Rules: each clip 30-60 seconds, return exactly 3 clips, only the JSON array. Eve
       }
     }
 
-    console.log('Cutting clips in parallel...');
+    console.log('Cutting clips sequentially...');
     
     const backendUrl = process.env.BACKEND_URL || `http://localhost:${process.env.PORT || 8000}`;
     
-    // Instead of sequentially, we run ffmpeg in parallel:
-    const clipPromises = moments.map(async (moment) => {
+    const clips = [];
+    for (const moment of moments) {
       const clipId = uuidv4();
       const clipPath = `${clipsDir}/${clipId}.mp4`;
-      const duration = moment.end - moment.start;
+      
+      // Enforce 45s hard cap logic
+      let endMoment = moment.end;
+      if (endMoment - moment.start > 45) {
+        endMoment = moment.start + 45;
+      }
+      const duration = endMoment - moment.start;
       
       const assPath = `${tmpDir}/${clipId}.ass`;
 
@@ -422,7 +430,7 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
         return `${h}:${m}:${s}.${cs}`;
       };
 
-      const clipWords = allWords.filter(w => w.start >= moment.start && w.end <= moment.end);
+      const clipWords = allWords.filter(w => w.start >= moment.start && w.end <= endMoment);
       
       if (clipWords.length > 0) {
         for (let i = 0; i < clipWords.length; i += 2) {
@@ -443,11 +451,11 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
 
       try {
         console.log(`Generating clip: ${moment.title} (${duration.toFixed(1)}s)`);
-        await run(`ffmpeg -hide_banner -loglevel error -threads 2 -ss ${moment.start} -i "${videoPath}" -t ${duration} -vf "crop=ih*9/16:ih:(iw-ih*9/16)/2:0,scale=1080:1920,ass='${escapedAssPath}'" -c:a aac -b:a 128k -c:v libx264 -preset veryfast -crf 23 -y "${clipPath}"`);
+        await run(`ffmpeg -hide_banner -loglevel error -threads 1 -ss ${moment.start} -i "${videoPath}" -t ${duration} -vf "crop=ih*9/16:ih:(iw-ih*9/16)/2:0,scale=480:-2,ass='${escapedAssPath}'" -c:a aac -b:a 128k -c:v libx264 -preset ultrafast -crf 28 -y "${clipPath}"`);
         
         registerClip(jobId, clipId, clipPath);
 
-        return {
+        clips.push({
           id: clipId,
           videoUrl: `${backendUrl}/clips/${jobId}/${clipId}.mp4`,
           downloadUrl: `${backendUrl}/download/${jobId}/${clipId}.mp4`,
@@ -455,16 +463,16 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
           title: moment.title || 'Clip',
           subtitle: moment.subtitle,
           startTime: moment.start,
-          endTime: moment.end
-        };
+          endTime: endMoment
+        });
       } catch (err) {
         console.error(`Failed to generate clip ${clipId}:`, err.message || err);
-        return null;
+      } finally {
+        try { if (fs.existsSync(assPath)) fs.unlinkSync(assPath); } catch(e) {}
       }
-    });
+    }
 
-    const clipResults = await Promise.all(clipPromises);
-    const clips = clipResults.filter(c => c !== null);
+    try { if (fs.existsSync(videoPath)) fs.unlinkSync(videoPath); } catch(e) {}
 
     console.log('Done generating all clips!');
     res.json({ clips });
