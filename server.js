@@ -221,6 +221,133 @@ app.get('/download/:jobId/:clipId', (req, res) => {
   stream.pipe(res);
 });
 
+const TIKTOK_REPOST_URL = "https://open.tiktokapis.com/v2/post/publish/video/init/";
+
+app.post('/tiktok/repost', async (req, res) => {
+  try {
+    const { access_token, video_url, title = "Posted from Trueclip" } = req.body;
+
+    if (!access_token || !video_url) {
+      return res.status(400).json({ error: "access_token and video_url are required." });
+    }
+
+    let buffer;
+    
+    // Check if the URL points to our backend itself or a local file
+    // Example: http://localhost:8000/clips/jobId/clipId.mp4
+    if (video_url.includes('/clips/')) {
+      try {
+        const parts = new URL(video_url).pathname.split('/');
+        const jobId = parts[parts.length - 2];
+        const clipIdRaw = parts[parts.length - 1];
+        const clipId = clipIdRaw.replace(/\.mp4$/i, '');
+        const clipPath = resolveClipPath(jobId, clipId);
+        if (clipPath) {
+          buffer = fs.readFileSync(clipPath);
+        }
+      } catch (e) {
+        console.warn("Failed to read local clip matching video_url, falling back to fetch", e.message);
+      }
+    }
+
+    if (!buffer) {
+      const videoResponse = await fetch(video_url);
+      if (!videoResponse.ok) {
+        return res.status(400).json({ error: `Failed to download video: ${videoResponse.statusText}` });
+      }
+      const arrayBuffer = await videoResponse.arrayBuffer();
+      buffer = Buffer.from(arrayBuffer);
+    }
+
+    const videoSize = buffer.length;
+    const maxChunkSize = 64 * 1024 * 1024; // 64 MB
+    let chunkSize = videoSize;
+    let totalChunkCount = 1;
+
+    if (videoSize > maxChunkSize) {
+      chunkSize = maxChunkSize;
+      totalChunkCount = Math.ceil(videoSize / chunkSize);
+    }
+
+    const repostPayload = {
+      post_info: {
+        title,
+        privacy_level: "SELF_ONLY",
+        disable_duet: false,
+        disable_comment: false,
+        disable_stitch: false,
+      },
+      source_info: {
+        source: "FILE_UPLOAD",
+        video_size: videoSize,
+        chunk_size: chunkSize,
+        total_chunk_count: totalChunkCount,
+      },
+    };
+
+    const initResponse = await fetch(TIKTOK_REPOST_URL, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${access_token}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(repostPayload),
+    });
+
+    const payload = await initResponse.json().catch(() => null);
+
+    if (!initResponse.ok) {
+      const errorMessage =
+        payload?.error?.message ||
+        payload?.message ||
+        payload?.error_description ||
+        "Unable to repost video to TikTok.";
+      return res.status(initResponse.status).json({ error: errorMessage });
+    }
+
+    const publishId = payload?.data?.publish_id || payload?.publish_id || "";
+    const uploadUrl = payload?.data?.upload_url || payload?.upload_url || "";
+
+    if (!publishId || !uploadUrl) {
+      return res.status(500).json({ error: "TikTok returned valid init response but missing publish_id or upload_url." });
+    }
+
+    // Upload chunks to the uploadUrl directly
+    for (let i = 0; i < totalChunkCount; i++) {
+      const start = i * chunkSize;
+      const end = Math.min(start + chunkSize, videoSize);
+      const chunk = buffer.subarray(start, end);
+      const contentRange = `bytes ${start}-${end - 1}/${videoSize}`;
+
+      const uploadRes = await fetch(uploadUrl, {
+        method: "PUT",
+        headers: {
+          "Content-Type": "video/mp4",
+          "Content-Length": chunk.length.toString(),
+          "Content-Range": contentRange,
+        },
+        body: chunk,
+      });
+
+      if (!uploadRes.ok) {
+        let uploadErrText = uploadRes.statusText;
+        try {
+            uploadErrText = await uploadRes.text();
+        } catch(e){}
+        return res.status(500).json({ error: `Failed to upload chunk ${i + 1} to TikTok: ${uploadRes.status} ${uploadErrText}` });
+      }
+    }
+
+    return res.json({
+      success: true,
+      publish_id: publishId,
+    });
+  } catch (error) {
+    console.error("TikTok Repost Error:", error);
+    return res.status(500).json({ error: "Unable to repost video to TikTok. " + (error.message || "") });
+  }
+});
+
 app.post('/generate', async (req, res) => {
   const { youtubeUrl, subtitleStyle = 'karaoke', highlightColor = '#FFD700', fontSize = 70, position = 'bottom' } = req.body;
   if (!youtubeUrl) return res.status(400).json({ error: 'YouTube URL is required' });
