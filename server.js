@@ -221,14 +221,64 @@ app.get('/download/:jobId/:clipId', (req, res) => {
   stream.pipe(res);
 });
 
+app.get('/tiktok/creator-info', async (req, res) => {
+  const authHeader = req.headers.authorization;
+  const accessToken = req.query.access_token || (authHeader ? authHeader.split(' ')[1] : null);
+  
+  if (!accessToken) {
+    return res.status(401).json({ error: "access_token is required" });
+  }
+
+  try {
+    const response = await fetch("https://open.tiktokapis.com/v2/post/publish/creator_info/query/", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+        "Content-Type": "application/json; charset=UTF-8",
+      }
+    });
+    
+    const payload = await response.json();
+    if (!response.ok) {
+      return res.status(response.status).json(payload);
+    }
+    
+    const data = payload?.data || {};
+    return res.json({
+      privacy_level_options: data.privacy_level_options || [],
+      max_video_post_duration_sec: data.max_video_post_duration_sec || 0,
+      comment_disabled: !!data.comment_disabled,
+      duet_disabled: !!data.duet_disabled,
+      stitch_disabled: !!data.stitch_disabled,
+    });
+  } catch (error) {
+    return res.status(500).json({ error: error.message });
+  }
+});
+
 const TIKTOK_REPOST_URL = "https://open.tiktokapis.com/v2/post/publish/video/init/";
 
 app.post('/tiktok/repost', async (req, res) => {
   try {
-    const { access_token, video_url, title = "Posted from Trueclip" } = req.body;
+    const { 
+      access_token, 
+      video_url, 
+      title = "My latest short is live",
+      privacy_level,
+      allow_comment = false,
+      allow_duet = false,
+      allow_stitch = false,
+      commercial_content_toggle = false,
+      your_brand = false,
+      branded_content = false
+    } = req.body;
 
     if (!access_token || !video_url) {
       return res.status(400).json({ error: "access_token and video_url are required." });
+    }
+
+    if (!privacy_level) {
+      return res.status(400).json({ error: "privacy_level is required." });
     }
 
     let buffer;
@@ -272,10 +322,12 @@ app.post('/tiktok/repost', async (req, res) => {
     const repostPayload = {
       post_info: {
         title,
-        privacy_level: "SELF_ONLY",
-        disable_duet: false,
-        disable_comment: false,
-        disable_stitch: false,
+        privacy_level: privacy_level,
+        disable_duet: !allow_duet,
+        disable_comment: !allow_comment,
+        disable_stitch: !allow_stitch,
+        brand_organic_toggle: your_brand,
+        brand_content_toggle: branded_content,
       },
       source_info: {
         source: "FILE_UPLOAD",
