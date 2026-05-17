@@ -222,38 +222,26 @@ app.get('/download/:jobId/:clipId', (req, res) => {
 });
 
 app.get('/tiktok/creator-info', async (req, res) => {
-  const authHeader = req.headers.authorization;
-  const accessToken = req.query.access_token || (authHeader ? authHeader.split(' ')[1] : null);
+  const { access_token } = req.query;
+  const response = await fetch('https://open.tiktokapis.com/v2/post/publish/creator_info/query/', {
+    method: 'POST',
+    headers: {
+      'Authorization': `Bearer ${access_token}`,
+      'Content-Type': 'application/json'
+    },
+    body: JSON.stringify({})
+  });
+  const data = await response.json();
   
-  if (!accessToken) {
-    return res.status(401).json({ error: "access_token is required" });
-  }
-
-  try {
-    const response = await fetch("https://open.tiktokapis.com/v2/post/publish/creator_info/query/", {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${accessToken}`,
-        "Content-Type": "application/json; charset=UTF-8",
-      }
-    });
-    
-    const payload = await response.json();
-    if (!response.ok) {
-      return res.status(response.status).json(payload);
-    }
-    
-    const data = payload?.data || {};
-    return res.json({
-      privacy_level_options: data.privacy_level_options || [],
-      max_video_post_duration_sec: data.max_video_post_duration_sec || 0,
-      comment_disabled: !!data.comment_disabled,
-      duet_disabled: !!data.duet_disabled,
-      stitch_disabled: !!data.stitch_disabled,
-    });
-  } catch (error) {
-    return res.status(500).json({ error: error.message });
-  }
+  if (data.error) return res.status(400).json({ error: data.error });
+  
+  res.json({
+    privacy_level_options: data.data.privacy_level_options,
+    max_video_post_duration_sec: data.data.max_video_post_duration_sec,
+    comment_disabled: data.data.comment_disabled,
+    duet_disabled: data.data.duet_disabled,
+    stitch_disabled: data.data.stitch_disabled
+  });
 });
 
 const TIKTOK_REPOST_URL = "https://open.tiktokapis.com/v2/post/publish/video/init/";
