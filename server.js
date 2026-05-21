@@ -410,7 +410,7 @@ app.post('/generate', async (req, res) => {
     const videoPath = `${tmpDir}/video.mp4`;
 
     console.log(`Downloading: ${targetUrl}`);
-    const command = buildYtDlpCommand(targetUrl, videoPath, "best[height<=720][ext=mp4]/best[height<=720]/best", true); // Pass true to limit duration
+    const command = buildYtDlpCommand(targetUrl, videoPath, null, true); // Using default which downloads up to 1080p
     console.log('Command:', command);
 
     const ytDlpPromise = execPromise(command).then(() => {
@@ -676,8 +676,8 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
       const escapedAssPath = assPath.replace(/\\/g, '/').replace(/:/g, '\\\\:');
 
       try {
-        console.log(`Generating clip: ${moment.title} (${duration.toFixed(1)}s)`);
-        await run(`ffmpeg -hide_banner -loglevel error -threads 1 -ss ${moment.start} -i "${videoPath}" -t ${duration} -vf "crop=ih*9/16:ih:(iw-ih*9/16)/2:0,scale=720:-2,ass='${escapedAssPath}'" -c:a aac -b:a 128k -c:v libx264 -preset ultrafast -crf 23 -y "${clipPath}"`);
+        console.log(`Generating clip: ${moment.title} (${duration.toFixed(1)}s) at 1080p resolution`);
+        await run(`ffmpeg -hide_banner -loglevel error -threads 1 -ss ${moment.start} -i "${videoPath}" -t ${duration} -vf "crop=ih*9/16:ih:(iw-ih*9/16)/2:0,scale=1080:-2,ass='${escapedAssPath}'" -c:a aac -b:a 192k -c:v libx264 -preset fast -crf 18 -y "${clipPath}"`);
         
         registerClip(jobId, clipId, clipPath);
 
