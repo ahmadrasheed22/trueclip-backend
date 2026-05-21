@@ -503,12 +503,12 @@ app.post('/generate', async (req, res) => {
       model: 'gpt-5.4-mini',
       messages: [{
         role: 'user',
-        content: `You are a viral content editor. Analyze this transcript and identify the 3 most engaging clips. For each, return: start_time, end_time, hook_description, suggested_title. Focus on: hooks, emotional peaks, surprising facts, controversial statements, humor.
+        content: `You are a viral content editor. Analyze this transcript and identify the 3 most engaging clips. Focus on: hooks, emotional peaks, surprising facts, controversial statements, humor.
 
 Transcript:
 ${fullText}
 
-Return ONLY a JSON array, no other text:
+Return ONLY a JSON array, no other text. Use EXACTLY these keys: "start", "end", "title", "subtitle":
 [
   { "start": 10.5, "end": 45.2, "title": "Suggested Title", "subtitle": "Hook description" }
 ]
@@ -534,6 +534,16 @@ Rules: each clip MUST be between 30 and 45 seconds maximum. Return exactly 3 cli
       }
     } catch {
       console.log('Failed to parse AI response, falling back to equal segments...');
+    }
+
+    // Normalize keys just in case the model used different ones
+    if (moments && moments.length > 0) {
+      moments = moments.map(m => ({
+        start: Number(m.start ?? m.start_time ?? 0),
+        end: Number(m.end ?? m.end_time ?? 30),
+        title: m.title ?? m.suggested_title ?? 'Clip',
+        subtitle: m.subtitle ?? m.hook_description ?? 'Hook'
+      }));
     }
 
     if (!moments || moments.length === 0) {
@@ -656,7 +666,8 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
         }
       } else {
         const secEnd = Math.floor(duration).toString().padStart(2,'0');
-        assContent += `Dialogue: 0,0:00:00.00,0:00:${secEnd}.00,Main,,0,0,0,,{\\b1}{\\c${aColor}}${(moment.subtitle || moment.title).toUpperCase()}\n`;
+        const fallbackText = String(moment.subtitle || moment.title || 'CLIP');
+        assContent += `Dialogue: 0,0:00:00.00,0:00:${secEnd}.00,Main,,0,0,0,,{\\b1}{\\c${aColor}}${fallbackText.toUpperCase()}\n`;
       }
 
       console.log('ASS SAMPLE:', assContent.substring(0, 500));
