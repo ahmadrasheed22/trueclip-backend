@@ -441,7 +441,7 @@ app.post('/generate', async (req, res) => {
           if (/[^\x00-\x7F]/.test(joinedText)) {
             console.log('Foreign language detected, translating transcript with OpenAI...');
             const transResponse = await openai.chat.completions.create({
-              model: 'gpt-4o-mini',
+              model: 'gpt-5.4-mini',
               messages: [{
                 role: 'system',
                 content: 'Translate the "text" fields in this JSON array to English. Do not change offset or duration. Output ONLY the strict JSON array without markdown.'
@@ -500,7 +500,7 @@ app.post('/generate', async (req, res) => {
 
     console.log('Finding best moments...');
     const gptResponse = await openai.chat.completions.create({
-      model: 'gpt-4o-mini',
+      model: 'gpt-5.4-mini',
       messages: [{
         role: 'user',
         content: `You are a viral content editor. Analyze this transcript and identify the 3 most engaging clips. For each, return: start_time, end_time, hook_description, suggested_title. Focus on: hooks, emotional peaks, surprising facts, controversial statements, humor.
