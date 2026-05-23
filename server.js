@@ -12,6 +12,7 @@ const VIDEO_ID_REGEX = /^[A-Za-z0-9_-]{11}$/;
 const YOUTUBE_CACHE_DIR = '/tmp/youtube-cache';
 const CLIPS_DIR = '/tmp/clips';
 const clipIndex = new Map();
+const jobs = {};
 
 const app = express();
 app.use(cors({ origin: 'https://trueclip.vercel.app' }));
@@ -157,6 +158,15 @@ function run(cmd) {
 }
 
 app.get('/', (req, res) => res.json({ status: 'Trueclip backend running' }));
+
+app.get('/job-status/:jobId', (req, res) => {
+  const jobId = req.params.jobId;
+  const job = jobs[jobId];
+  if (!job) {
+    return res.status(404).json({ error: 'Job not found' });
+  }
+  res.json(job);
+});
 
 app.get('/download/youtube/:videoId', async (req, res) => {
   const videoId = req.params.videoId;
@@ -388,23 +398,27 @@ app.post('/tiktok/repost', async (req, res) => {
   }
 });
 
-app.post('/generate', async (req, res) => {
+app.post('/generate-clips', async (req, res) => {
   const { youtubeUrl, subtitleStyle = 'karaoke', highlightColor = '#FFD700', fontSize = 70, position = 'bottom' } = req.body;
   if (!youtubeUrl) return res.status(400).json({ error: 'YouTube URL is required' });
 
-  const delay = Math.floor(Math.random() * 2000) + 500;
-  await new Promise(resolve => setTimeout(resolve, delay));
-
   const jobId = uuidv4();
-  const tmpDir = `/tmp/${jobId}`;
-  const clipsDir = path.join(CLIPS_DIR, jobId);
+  jobs[jobId] = { status: 'processing' };
+  
+  // Return early for async processing
+  res.json({ jobId });
 
-  try {
-    fs.mkdirSync(tmpDir, { recursive: true });
-    fs.mkdirSync(clipsDir, { recursive: true });
+  // Process asynchronously in the background
+  (async () => {
+    const tmpDir = `/tmp/${jobId}`;
+    const clipsDir = path.join(CLIPS_DIR, jobId);
 
-    const videoId = youtubeUrl.match(/(?:v=|youtu\.be\/)([^&\n?#]+)/)?.[1];
-    if (!videoId) throw new Error('Invalid YouTube URL.');
+    try {
+      fs.mkdirSync(tmpDir, { recursive: true });
+      fs.mkdirSync(clipsDir, { recursive: true });
+
+      const videoId = youtubeUrl.match(/(?:v=|youtu\.be\/)([^&\n?#]+)/)?.[1];
+      if (!videoId) throw new Error('Invalid YouTube URL.');
 
     const targetUrl = `https://www.youtube.com/watch?v=${videoId}`;
     const videoPath = `${tmpDir}/video.mp4`;
@@ -701,12 +715,13 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
     try { if (fs.existsSync(videoPath)) fs.unlinkSync(videoPath); } catch(e) {}
 
     console.log('Done generating all clips!');
-    res.json({ clips });
+    jobs[jobId] = { status: 'done', clips };
 
   } catch (error) {
     console.error('Error:', error);
-    res.status(500).json({ error: error.toString() });
+    jobs[jobId] = { status: 'error', message: error.toString() };
   }
+})();
 });
 
 const PORT = process.env.PORT || 8000;
