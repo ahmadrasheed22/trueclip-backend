@@ -398,7 +398,7 @@ app.post('/tiktok/repost', async (req, res) => {
   }
 });
 
-app.post('/generate-clips', async (req, res) => {
+app.post(['/generate-clips', '/generate'], async (req, res) => {
   const { youtubeUrl, subtitleStyle = 'karaoke', highlightColor = '#FFD700', fontSize = 70, position = 'bottom' } = req.body;
   if (!youtubeUrl) return res.status(400).json({ error: 'YouTube URL is required' });
 
