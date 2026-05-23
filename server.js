@@ -716,6 +716,7 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
 
     console.log('Done generating all clips!');
     jobs[jobId] = { status: 'done', clips };
+    console.log('Job done:', jobId, 'clips:', clips.length);
 
   } catch (error) {
     console.error('Error:', error);
