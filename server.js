@@ -165,7 +165,7 @@ app.get('/job-status/:jobId', (req, res) => {
   if (!job) {
     return res.status(404).json({ error: 'Job not found' });
   }
-  res.json(job);
+  res.json({ status: job.status, clips: job.clips, message: job.message });
 });
 
 app.get('/download/youtube/:videoId', async (req, res) => {
@@ -715,8 +715,8 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
     try { if (fs.existsSync(videoPath)) fs.unlinkSync(videoPath); } catch(e) {}
 
     console.log('Done generating all clips!');
-    jobs[jobId] = { status: 'done', clips };
-    console.log('Job done:', jobId, 'clips:', clips.length);
+    jobs[jobId] = { status: 'done', clips: clips };
+    console.log('Job marked done:', jobId, clips.length, 'clips');
 
   } catch (error) {
     console.error('Error:', error);
