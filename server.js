@@ -7,6 +7,7 @@ const path = require('path');
 const { OpenAI } = require('openai');
 const { v4: uuidv4 } = require('uuid');
 const { YoutubeTranscript } = require('youtube-transcript');
+const ytdl = require('ytdl-core');
 const execPromise = util.promisify(exec);
 const VIDEO_ID_REGEX = /^[A-Za-z0-9_-]{11}$/;
 const YOUTUBE_CACHE_DIR = '/tmp/youtube-cache';
@@ -179,7 +180,86 @@ async function downloadWithFallback(targetUrl, videoPath, limitDuration = false)
     }
   }
 
-  throw new Error(getYtDlpErrorMessage(lastError));
+  console.warn('yt-dlp failed for all attempts, trying ytdl-core fallback.');
+  await downloadWithYtdlCore(targetUrl, videoPath);
+}
+
+function chooseYtdlFormat(info) {
+  const candidates = (info && Array.isArray(info.formats) ? info.formats : [])
+    .filter((format) => format && format.hasVideo && format.hasAudio);
+
+  if (candidates.length === 0) {
+    return null;
+  }
+
+  const preferred = candidates
+    .filter((format) => String(format.container || '').toLowerCase() === 'mp4')
+    .sort((a, b) => (Number(b.height || 0) - Number(a.height || 0)) || (Number(b.bitrate || 0) - Number(a.bitrate || 0)));
+
+  if (preferred.length > 0) {
+    return preferred[0];
+  }
+
+  return candidates.sort((a, b) => (Number(b.height || 0) - Number(a.height || 0)) || (Number(b.bitrate || 0) - Number(a.bitrate || 0)))[0];
+}
+
+function runFfmpegConvert(sourcePath, targetPath) {
+  return run(
+    `ffmpeg -hide_banner -loglevel error -i "${sourcePath}" -c:v libx264 -preset fast -crf 18 -c:a aac -movflags +faststart -y "${targetPath}"`
+  );
+}
+
+async function downloadWithYtdlCore(targetUrl, videoPath) {
+  if (!ytdl.validateURL(targetUrl)) {
+    throw new Error('Invalid YouTube URL.');
+  }
+
+  const info = await ytdl.getInfo(targetUrl);
+  const format = chooseYtdlFormat(info);
+
+  if (!format) {
+    throw new Error('No downloadable ytdl-core format was found.');
+  }
+
+  const formatContainer = String(format.container || 'mp4').toLowerCase();
+  const tempPath = `${videoPath}.source.${formatContainer}`;
+
+  await new Promise((resolve, reject) => {
+    const inputStream = ytdl.downloadFromInfo(info, {
+      format,
+      highWaterMark: 1 << 25,
+      dlChunkSize: 0,
+    });
+    const outputStream = fs.createWriteStream(tempPath);
+
+    const cleanup = (error) => {
+      inputStream.destroy();
+      outputStream.destroy();
+      if (error) {
+        reject(error);
+      }
+    };
+
+    inputStream.on('error', cleanup);
+    outputStream.on('error', cleanup);
+    outputStream.on('finish', resolve);
+
+    inputStream.pipe(outputStream);
+  });
+
+  try {
+    if (formatContainer === 'mp4') {
+      fs.copyFileSync(tempPath, videoPath);
+    } else {
+      await runFfmpegConvert(tempPath, videoPath);
+    }
+  } finally {
+    try {
+      if (fs.existsSync(tempPath)) fs.unlinkSync(tempPath);
+    } catch (e) {}
+  }
+
+  console.log('ytdl-core fallback download complete.');
 }
 
 function isValidVideoId(videoId) {
