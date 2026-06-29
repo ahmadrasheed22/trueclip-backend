@@ -40,7 +40,7 @@ const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
 const DEFAULT_YT_FORMAT = 'bestvideo[height<=1080][ext=mp4]+bestaudio[ext=m4a]/bestvideo[height<=1080]+bestaudio/best[height<=1080]/best';
 const FALLBACK_YT_FORMAT = 'bestvideo+bestaudio/best';
-const DEFAULT_YT_EXTRACTOR_ARGS = 'youtube:player_client=android,mweb,web,default';
+const PLAYER_CLIENT_RETRIES = ['android,web', 'android', 'web', 'mweb'];
 
 function setupCookies() {
   const cookiePath = '/tmp/youtube-cookies.txt';
@@ -81,13 +81,26 @@ function setupCookies() {
   }
 }
 
+function getCookiesFilePath() {
+  const projectCookieFile = path.join(__dirname, 'cookies.txt');
+  if (fs.existsSync(projectCookieFile)) {
+    return 'cookies.txt';
+  }
+
+  const tempCookieFile = '/tmp/youtube-cookies.txt';
+  if (fs.existsSync(tempCookieFile)) {
+    return tempCookieFile;
+  }
+
+  return null;
+}
+
 function buildYtDlpCommand(targetUrl, videoPath, options = {}) {
   const {
     format = DEFAULT_YT_FORMAT,
     limitDuration = false,
-    extractorArgs = process.env.YTDLP_EXTRACTOR_ARGS?.trim() || DEFAULT_YT_EXTRACTOR_ARGS,
+    playerClient = 'android,web',
   } = options;
-  const cookiesFile = '/tmp/youtube-cookies.txt';
 
   let cmd = `yt-dlp`;
   if (format) {
@@ -103,23 +116,17 @@ function buildYtDlpCommand(targetUrl, videoPath, options = {}) {
   cmd += ` --no-playlist`;
   cmd += ` --retries 10`;
   cmd += ` --socket-timeout 60`;
-  
-  if (extractorArgs) {
-    cmd += ` --extractor-args "${extractorArgs}"`;
-  }
+
+  cmd += ` --extractor-args "youtube:player_client=${playerClient}"`;
   cmd += ` --geo-bypass`;
   cmd += ` --no-check-certificates`;
   cmd += ` --sleep-requests 1`;
   cmd += ` --sleep-interval 2`;
   cmd += ` --max-sleep-interval 5`;
-  
-  if (fs.existsSync(cookiesFile)) {
-    cmd += ` --cookies "${cookiesFile}"`;
-  }
 
-  const cookiesFromBrowser = process.env.YTDLP_COOKIES_FROM_BROWSER?.trim();
-  if (!fs.existsSync(cookiesFile) && cookiesFromBrowser) {
-    cmd += ` --cookies-from-browser "${cookiesFromBrowser}"`;
+  const cookiesFile = getCookiesFilePath();
+  if (cookiesFile) {
+    cmd += ` --cookies "${cookiesFile}"`;
   }
 
   const runtimes = process.env.YTDLP_JS_RUNTIMES || "node";
@@ -137,23 +144,11 @@ function buildYtDlpCommand(targetUrl, videoPath, options = {}) {
 }
 
 function getYtDlpCommandAttempts(limitDuration = false) {
-  const baseExtractorArgs = process.env.YTDLP_EXTRACTOR_ARGS?.trim() || DEFAULT_YT_EXTRACTOR_ARGS;
-  const extractorArgsAttempts = [
-    baseExtractorArgs,
-    'youtube:player_client=android,mweb,web,default',
-    'youtube:player_client=android,web',
-    'youtube:player_client=web,default',
-  ].filter((value, index, array) => Boolean(value) && array.indexOf(value) === index);
-
-  const formatAttempts = [DEFAULT_YT_FORMAT, 'bv*[height<=1080]+ba/b[height<=1080]/b', FALLBACK_YT_FORMAT];
-
-  return extractorArgsAttempts.flatMap((extractorArgs) => (
-    formatAttempts.map((format) => ({
-      extractorArgs,
-      format,
-      limitDuration,
-    }))
-  ));
+  return PLAYER_CLIENT_RETRIES.map((playerClient) => ({
+    playerClient,
+    format: DEFAULT_YT_FORMAT,
+    limitDuration,
+  }));
 }
 
 function getYtDlpErrorMessage(error) {
@@ -164,15 +159,6 @@ function getYtDlpErrorMessage(error) {
 }
 
 async function downloadWithFallback(targetUrl, videoPath, limitDuration = false) {
-  try {
-    console.log('Trying ytdl-core fallback first.');
-    await downloadWithYtdlCore(targetUrl, videoPath);
-    return;
-  } catch (error) {
-    const message = getYtDlpErrorMessage(error);
-    console.warn('ytdl-core fallback failed, trying yt-dlp:', message);
-  }
-
   const attempts = getYtDlpCommandAttempts(limitDuration);
   let lastError = null;
 
@@ -189,7 +175,12 @@ async function downloadWithFallback(targetUrl, videoPath, limitDuration = false)
     }
   }
 
-  throw new Error(getYtDlpErrorMessage(lastError));
+  console.warn('yt-dlp failed for all attempts, trying ytdl-core fallback.');
+  await downloadWithYtdlCore(targetUrl, videoPath);
+
+  if (lastError) {
+    console.warn('yt-dlp fallback was bypassed by ytdl-core success:', getYtDlpErrorMessage(lastError));
+  }
 }
 
 function chooseYtdlFormat(info) {
