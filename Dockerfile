@@ -19,7 +19,7 @@ RUN curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
     && apt-get install -y nodejs \
     && rm -rf /var/lib/apt/lists/*
 
-RUN python3 -m pip install --no-cache-dir --upgrade yt-dlp
+RUN python3 -m pip install --no-cache-dir --break-system-packages --upgrade yt-dlp
 
 WORKDIR /app
 COPY package*.json ./
