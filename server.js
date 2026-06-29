@@ -22,38 +22,60 @@ app.use('/clips', express.static(CLIPS_DIR));
 
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
+const DEFAULT_YT_FORMAT = 'bestvideo[height<=1080][ext=mp4]+bestaudio[ext=m4a]/bestvideo[height<=1080]+bestaudio/best[height<=1080]/best';
+const FALLBACK_YT_FORMAT = 'bestvideo+bestaudio/best';
+const DEFAULT_YT_EXTRACTOR_ARGS = 'youtube:player_client=android,mweb,web,default';
+
 function setupCookies() {
-  const b64 = process.env.YTDLP_COOKIES_B64;
   const cookiePath = '/tmp/youtube-cookies.txt';
+  const cookieFile = process.env.YTDLP_COOKIES_FILE?.trim();
+  const b64 = process.env.YTDLP_COOKIES_B64;
+
+  if (cookieFile) {
+    try {
+      const resolvedCookieFile = path.resolve(cookieFile);
+      if (fs.existsSync(resolvedCookieFile)) {
+        fs.copyFileSync(resolvedCookieFile, cookiePath);
+        console.log('Cookies written from YTDLP_COOKIES_FILE');
+        return;
+      }
+      console.warn('YTDLP_COOKIES_FILE was set but the file was not found:', resolvedCookieFile);
+    } catch (e) {
+      console.warn('Failed to write cookies from YTDLP_COOKIES_FILE:', e.message);
+    }
+  }
 
   if (b64) {
     try {
       const decoded = Buffer.from(b64, 'base64').toString('utf8');
       fs.writeFileSync(cookiePath, decoded, { encoding: 'utf8' });
       console.log('Cookies written from YTDLP_COOKIES_B64');
+      return;
     } catch (e) {
       console.warn('Failed to write cookies:', e.message);
     }
+  }
+
+  const repoCookies = path.join(__dirname, 'cookies.txt');
+  if (fs.existsSync(repoCookies)) {
+    fs.copyFileSync(repoCookies, cookiePath);
+    console.log('Cookies written from repo cookies.txt');
   } else {
-    const repoCookies = path.join(__dirname, 'cookies.txt');
-    if (fs.existsSync(repoCookies)) {
-      fs.copyFileSync(repoCookies, cookiePath);
-      console.log('Cookies written from repo cookies.txt');
-    } else {
-      console.log('No cookies available.');
-    }
+    console.log('No cookies available.');
   }
 }
 
-function buildYtDlpCommand(targetUrl, videoPath, format = null, limitDuration = false) {
+function buildYtDlpCommand(targetUrl, videoPath, options = {}) {
+  const {
+    format = DEFAULT_YT_FORMAT,
+    limitDuration = false,
+    extractorArgs = process.env.YTDLP_EXTRACTOR_ARGS?.trim() || DEFAULT_YT_EXTRACTOR_ARGS,
+  } = options;
   const cookiesFile = '/tmp/youtube-cookies.txt';
 
   let cmd = `yt-dlp`;
   if (format) {
     cmd += ` -f "${format}"`;
-  } else {
-    // Try multiple format options for better regional bypass
-    cmd += ` -f "bestvideo[height<=1080][ext=mp4]+bestaudio[ext=m4a]/bestvideo[height<=1080]+bestaudio/best[height<=1080]/best"`;
   }
   
   if (limitDuration) {
@@ -66,9 +88,9 @@ function buildYtDlpCommand(targetUrl, videoPath, format = null, limitDuration = 
   cmd += ` --retries 10`;
   cmd += ` --socket-timeout 60`;
   
-  // Use multiple player clients for better bypass success
-  const extractorArgs = "youtube:player_client=web,default";
-  cmd += ` --extractor-args "${extractorArgs}"`;
+  if (extractorArgs) {
+    cmd += ` --extractor-args "${extractorArgs}"`;
+  }
   cmd += ` --geo-bypass`;
   cmd += ` --no-check-certificates`;
   cmd += ` --sleep-requests 1`;
@@ -77,6 +99,11 @@ function buildYtDlpCommand(targetUrl, videoPath, format = null, limitDuration = 
   
   if (fs.existsSync(cookiesFile)) {
     cmd += ` --cookies "${cookiesFile}"`;
+  }
+
+  const cookiesFromBrowser = process.env.YTDLP_COOKIES_FROM_BROWSER?.trim();
+  if (!fs.existsSync(cookiesFile) && cookiesFromBrowser) {
+    cmd += ` --cookies-from-browser "${cookiesFromBrowser}"`;
   }
 
   const runtimes = process.env.YTDLP_JS_RUNTIMES || "node";
@@ -91,6 +118,53 @@ function buildYtDlpCommand(targetUrl, videoPath, format = null, limitDuration = 
   cmd += ` "${targetUrl}"`;
 
   return cmd;
+}
+
+function getYtDlpCommandAttempts(limitDuration = false) {
+  const baseExtractorArgs = process.env.YTDLP_EXTRACTOR_ARGS?.trim() || DEFAULT_YT_EXTRACTOR_ARGS;
+  const extractorArgsAttempts = [
+    baseExtractorArgs,
+    'youtube:player_client=android,mweb,web,default',
+    'youtube:player_client=android,web',
+    'youtube:player_client=web,default',
+  ].filter((value, index, array) => Boolean(value) && array.indexOf(value) === index);
+
+  const formatAttempts = [DEFAULT_YT_FORMAT, 'bv*[height<=1080]+ba/b[height<=1080]/b', FALLBACK_YT_FORMAT];
+
+  return extractorArgsAttempts.flatMap((extractorArgs) => (
+    formatAttempts.map((format) => ({
+      extractorArgs,
+      format,
+      limitDuration,
+    }))
+  ));
+}
+
+function getYtDlpErrorMessage(error) {
+  const raw = error && typeof error === 'object' && 'stderr' in error
+    ? String(error.stderr)
+    : error instanceof Error ? error.message : String(error);
+  return mapYtDlpError(raw);
+}
+
+async function downloadWithFallback(targetUrl, videoPath, limitDuration = false) {
+  const attempts = getYtDlpCommandAttempts(limitDuration);
+  let lastError = null;
+
+  for (const [index, attempt] of attempts.entries()) {
+    const command = buildYtDlpCommand(targetUrl, videoPath, attempt);
+    console.log(`yt-dlp attempt ${index + 1}/${attempts.length}`);
+    try {
+      await execPromise(command);
+      return;
+    } catch (error) {
+      lastError = error;
+      const message = getYtDlpErrorMessage(error);
+      console.warn(`yt-dlp attempt ${index + 1} failed:`, message);
+    }
+  }
+
+  throw new Error(getYtDlpErrorMessage(lastError));
 }
 
 function isValidVideoId(videoId) {
@@ -182,8 +256,7 @@ app.get('/download/youtube/:videoId', async (req, res) => {
   try {
     if (!fs.existsSync(cachePath)) {
       const targetUrl = `https://www.youtube.com/watch?v=${videoId}`;
-      const command = buildYtDlpCommand(targetUrl, cachePath);
-      await execPromise(command);
+      await downloadWithFallback(targetUrl, cachePath);
     }
 
     const fileName = `${sanitizeFilename(title, videoId)}.mp4`;
@@ -424,15 +497,10 @@ app.post(['/generate-clips', '/generate'], async (req, res) => {
     const videoPath = `${tmpDir}/video.mp4`;
 
     console.log(`Downloading: ${targetUrl}`);
-    const command = buildYtDlpCommand(targetUrl, videoPath, null, true); // Using default which downloads up to 1080p
-    console.log('Command:', command);
-
-    const ytDlpPromise = execPromise(command).then(() => {
+    const ytDlpPromise = downloadWithFallback(targetUrl, videoPath, true).then(() => {
       console.log('Download complete.');
     }).catch(error => {
-      const raw = error && typeof error === 'object' && 'stderr' in error
-        ? String(error.stderr)
-        : error instanceof Error ? error.message : String(error);
+      const raw = error instanceof Error ? error.message : String(error);
       console.error('yt-dlp error:', raw);
       throw new Error(mapYtDlpError(raw));
     });
