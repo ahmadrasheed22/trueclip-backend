@@ -164,6 +164,15 @@ function getYtDlpErrorMessage(error) {
 }
 
 async function downloadWithFallback(targetUrl, videoPath, limitDuration = false) {
+  try {
+    console.log('Trying ytdl-core fallback first.');
+    await downloadWithYtdlCore(targetUrl, videoPath);
+    return;
+  } catch (error) {
+    const message = getYtDlpErrorMessage(error);
+    console.warn('ytdl-core fallback failed, trying yt-dlp:', message);
+  }
+
   const attempts = getYtDlpCommandAttempts(limitDuration);
   let lastError = null;
 
@@ -180,8 +189,7 @@ async function downloadWithFallback(targetUrl, videoPath, limitDuration = false)
     }
   }
 
-  console.warn('yt-dlp failed for all attempts, trying ytdl-core fallback.');
-  await downloadWithYtdlCore(targetUrl, videoPath);
+  throw new Error(getYtDlpErrorMessage(lastError));
 }
 
 function chooseYtdlFormat(info) {
