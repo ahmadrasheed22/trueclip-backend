@@ -15,7 +15,22 @@ const clipIndex = new Map();
 const jobs = {};
 
 const app = express();
-app.use(cors({ origin: 'https://trueclip.vercel.app' }));
+const allowedCorsOrigins = new Set([
+  'https://trueclip.vercel.app',
+  'http://localhost:3000',
+  'http://127.0.0.1:3000',
+]);
+
+app.use(cors({
+  origin(origin, callback) {
+    if (!origin || allowedCorsOrigins.has(origin) || /^https:\/\/.*\.vercel\.app$/i.test(origin)) {
+      return callback(null, true);
+    }
+
+    return callback(null, false);
+  },
+  exposedHeaders: ['Content-Disposition', 'Content-Type'],
+}));
 app.use(express.json({ limit: '100mb' }));
 app.use(express.urlencoded({ limit: '100mb', extended: true }));
 app.use('/clips', express.static(CLIPS_DIR));
