@@ -36,6 +36,22 @@ app.use(express.json({ limit: '100mb' }));
 app.use(express.urlencoded({ limit: '100mb', extended: true }));
 app.use('/clips', express.static(CLIPS_DIR));
 
+function getPublicBackendUrl(req) {
+  const forwardedHost = String(req.headers['x-forwarded-host'] || req.headers.host || '').split(',')[0].trim();
+  const forwardedProto = String(req.headers['x-forwarded-proto'] || '').split(',')[0].trim() || 'https';
+
+  if (forwardedHost) {
+    return `${forwardedProto}://${forwardedHost}`;
+  }
+
+  const configured = process.env.BACKEND_URL?.trim();
+  if (configured) {
+    return configured;
+  }
+
+  return `http://localhost:${process.env.PORT || 8000}`;
+}
+
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
 const DEFAULT_YT_FORMAT = 'bestvideo[height<=1080][ext=mp4]+bestaudio[ext=m4a]/bestvideo[height<=1080]+bestaudio/best[height<=1080]/best';
@@ -749,7 +765,7 @@ Rules: each clip MUST be between 30 and 45 seconds maximum. Return exactly 3 cli
 
     console.log('Cutting clips sequentially...');
     
-    const backendUrl = process.env.BACKEND_URL || `http://localhost:${process.env.PORT || 8000}`;
+    const backendUrl = getPublicBackendUrl(req);
     
     const clips = [];
     for (const moment of moments) {
